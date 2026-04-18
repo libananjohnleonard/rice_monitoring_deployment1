@@ -7,8 +7,7 @@ import {
   summarizeSectionsForReanalysis,
   summarizeWholeFieldImageResults,
 } from '../lib/fieldAnalysis';
-
-const API_BASE_URL = 'http://localhost:3001';
+import { API_BASE_URL } from '../lib/config';
 
 function currentStatusLabel(result?: AnalysisHistoryItem['result'] | null) {
   if (!result) return 'Waiting';

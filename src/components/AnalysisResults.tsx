@@ -20,8 +20,7 @@ import {
   softenExclusionMaskPreview,
   softenTransparentExclusionPreview,
 } from '../lib/imageEditing';
-
-const API_BASE_URL = 'http://localhost:3001';
+import { API_BASE_URL } from '../lib/config';
 
 export type AnalysisResultDetails = {
   status: 'Healthy' | 'Moderate' | 'Poor';

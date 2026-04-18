@@ -9,8 +9,7 @@ import {
   Upload,
 } from 'lucide-react';
 import type { AnalysisHistoryItem } from '../components/AnalysisResults';
-
-const API_BASE_URL = 'http://localhost:3001';
+import { API_BASE_URL } from '../lib/config';
 const ITEMS_PER_PAGE = 8;
 
 type SortOption = 'newest' | 'oldest' | 'category' | 'source';
@@ -320,7 +319,6 @@ export function ManageUploadsPage() {
             >
               <option value="all">All categories</option>
               <option value="whole_field">Whole Field</option>
-              <option value="partial_field">Partial Field</option>
             </select>
           </label>
 

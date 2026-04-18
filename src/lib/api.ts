@@ -1,4 +1,5 @@
 
+import { API_BASE_URL } from './config';
 
 function toNumber(v: unknown): number {
   if (typeof v === 'number') return v;
@@ -32,7 +33,7 @@ export interface PlantAnalysis {
 }
 
 export async function insertPlantImage(image_data: string, captured_at?: string): Promise<PlantImage> {
-  const response = await fetch('http://localhost:3001/api/images', {
+  const response = await fetch(`${API_BASE_URL}/api/images`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_data, captured_at }),
@@ -56,7 +57,7 @@ export async function insertPlantAnalysis(data: {
   recommendations: string;
   analyzed_at?: string;
 }): Promise<PlantAnalysis> {
-  const response = await fetch('http://localhost:3001/api/analysis', {
+  const response = await fetch(`${API_BASE_URL}/api/analysis`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -77,7 +78,7 @@ export async function insertPlantAnalysis(data: {
 
 // Fetch analyses with joined images
 export async function fetchAnalyses(limit = 50): Promise<AnalysisWithImage[]> {
-  const response = await fetch(`http://localhost:3001/api/analyses?limit=${limit}`);
+  const response = await fetch(`${API_BASE_URL}/api/analyses?limit=${limit}`);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to fetch analyses');
