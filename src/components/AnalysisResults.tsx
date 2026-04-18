@@ -4,19 +4,29 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  MapPin,
+  Pencil,
   RefreshCw,
   X,
 } from 'lucide-react';
 import type {
   AnalysisInput,
+  UploadImageItem,
   UploadCategory,
   UploadSourceType,
 } from './UploadImages';
+import { ImageEditorModal } from './ImageEditorModal';
+import {
+  softenExclusionMaskPreview,
+  softenTransparentExclusionPreview,
+} from '../lib/imageEditing';
 
 const API_BASE_URL = 'http://localhost:3001';
 
 export type AnalysisResultDetails = {
   status: 'Healthy' | 'Moderate' | 'Poor';
+  harvestReady?: boolean;
+  harvestStatus?: 'Not Ready' | 'Nearly Ready' | 'Ready to Harvest' | 'Needs Attention or Overripe';
   healthScore: number;
   green: number;
   yellow: number;
@@ -40,6 +50,8 @@ export type SectionResult = {
   rowIndex: number;
   colIndex: number;
   healthStatus: 'Healthy' | 'Moderate' | 'Poor';
+  harvestReady?: boolean;
+  harvestStatus?: AnalysisResultDetails['harvestStatus'];
   healthScore: number;
   greenPercentage: number;
   yellowPercentage: number;
@@ -73,11 +85,16 @@ type Props = {
     excludedSections: string[];
     imageIndex?: number;
   }) => void | Promise<void>;
+  onUpdateImage?: (payload: {
+    imageIndex: number;
+    image: UploadImageItem;
+  }) => void | Promise<void>;
   onSelectHistoryItem?: (item: AnalysisHistoryItem) => void;
   selectedHistoryId?: string | null;
 };
 
-const DISPLAY_LIMIT = 6;
+const LIST_DISPLAY_LIMIT = 5;
+const CARD_DISPLAY_LIMIT = 6;
 
 function categoryLabel(category: UploadCategory) {
   switch (category) {
@@ -85,8 +102,6 @@ function categoryLabel(category: UploadCategory) {
       return 'Whole Field';
     case 'partial_field':
       return 'Partial Field';
-    case 'close_up':
-      return 'Close-up';
     default:
       return 'Unknown';
   }
@@ -107,6 +122,10 @@ function sourceTypeLabel(sourceType: UploadSourceType) {
   }
 }
 
+function normalizeGroupingText(value?: string | null) {
+  return (value ?? '').trim().toLowerCase();
+}
+
 function statusClasses(status: string) {
   switch (status) {
     case 'Healthy':
@@ -120,11 +139,65 @@ function statusClasses(status: string) {
   }
 }
 
+function harvestStatusClasses(
+  harvestStatus?: AnalysisResultDetails['harvestStatus']
+) {
+  switch (harvestStatus) {
+    case 'Ready to Harvest':
+      return 'bg-amber-100 text-amber-800';
+    case 'Nearly Ready':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'Needs Attention or Overripe':
+      return 'bg-red-100 text-red-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+}
+
+function harvestStatusLabel(
+  harvestStatus?: AnalysisResultDetails['harvestStatus'],
+  harvestReady?: boolean
+) {
+  if (harvestStatus) return harvestStatus;
+  return harvestReady ? 'Ready to Harvest' : 'Not Ready';
+}
+
+function deriveHarvestStatus(
+  yellowPercentage: number,
+  greenPercentage: number,
+  healthScore: number
+): NonNullable<AnalysisResultDetails['harvestStatus']> {
+  if (
+    yellowPercentage >= 55 ||
+    (yellowPercentage >= 35 && healthScore < 45)
+  ) {
+    return 'Needs Attention or Overripe';
+  }
+
+  if (
+    yellowPercentage >= 30 &&
+    yellowPercentage >= greenPercentage * 0.8 &&
+    healthScore >= 45
+  ) {
+    return 'Ready to Harvest';
+  }
+
+  if (
+    yellowPercentage >= 15 &&
+    yellowPercentage >= greenPercentage * 0.3 &&
+    healthScore >= 40
+  ) {
+    return 'Nearly Ready';
+  }
+
+  return 'Not Ready';
+}
+
 function overlayCellClasses(
   status: SectionResult['healthStatus'],
   excluded: boolean
 ) {
-  if (excluded) return 'bg-slate-500/20';
+  if (excluded) return 'bg-white/80';
 
   switch (status) {
     case 'Healthy':
@@ -138,12 +211,38 @@ function overlayCellClasses(
   }
 }
 
+function previewCellClasses(
+  excluded: boolean,
+  highlighted: boolean,
+  edited: boolean
+) {
+  if (!edited) {
+    return highlighted
+      ? 'border-2 border-emerald-700 shadow-[0_0_0_2px_rgba(4,120,87,0.22)] bg-transparent'
+      : 'border border-white/80 bg-transparent';
+  }
+
+  const tone = excluded
+    ? 'bg-slate-950/34 backdrop-blur-[3px]'
+    : 'bg-emerald-500/12';
+
+  const border = highlighted
+    ? excluded
+      ? 'border-2 border-white shadow-[0_0_0_2px_rgba(15,23,42,0.55),inset_0_0_0_1px_rgba(255,255,255,0.75)]'
+      : 'border-2 border-emerald-900 shadow-[0_0_0_2px_rgba(6,95,70,0.35),inset_0_0_0_1px_rgba(255,255,255,0.6)]'
+    : excluded
+      ? 'border border-white/80'
+      : 'border border-emerald-900/70';
+
+  return `${tone} ${border}`;
+}
+
 function overlayLabelClasses(
   status?: SectionResult['healthStatus'],
   excluded = false
 ) {
   if (excluded) {
-    return 'bg-slate-700/80 text-slate-100';
+    return 'bg-white/90 text-slate-900';
   }
 
   switch (status) {
@@ -161,6 +260,23 @@ function overlayLabelClasses(
 function clampGridSize(value?: number) {
   if (!value || Number.isNaN(value)) return 4;
   return Math.max(1, Math.min(8, value));
+}
+
+type GpsDisplayFormat = 'decimal' | 'dms' | 'both';
+
+function toDms(
+  value: number,
+  positiveDirection: 'N' | 'E',
+  negativeDirection: 'S' | 'W'
+) {
+  const direction = value >= 0 ? positiveDirection : negativeDirection;
+  const abs = Math.abs(value);
+  const degrees = Math.floor(abs);
+  const minutesFloat = (abs - degrees) * 60;
+  const minutes = Math.floor(minutesFloat);
+  const seconds = (minutesFloat - minutes) * 60;
+
+  return `${degrees}° ${minutes}' ${seconds.toFixed(6)}" ${direction}`;
 }
 
 function EmptyWorkspace() {
@@ -184,10 +300,6 @@ function EmptyWorkspace() {
           <p className="text-xs text-slate-700">Section</p>
           <p className="mt-1 font-medium text-slate-900">Focused area</p>
         </div>
-        <div className="rounded-xl border border-emerald-200 bg-slate-50 p-3">
-          <p className="text-xs text-slate-700">Close-up</p>
-          <p className="mt-1 font-medium text-slate-900">Plant inspection</p>
-        </div>
       </div>
 
       <div className="flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-emerald-200 bg-slate-50 px-6 text-center">
@@ -203,24 +315,89 @@ function EmptyWorkspace() {
 
 function GridOverlayPreview({
   imageSrc,
+  originalImageSrc,
   sections = [],
   gridRows = 4,
   gridCols = 4,
   excludedSections,
   onToggleExclude,
+  onOpenPreview,
 }: {
   imageSrc: string;
+  originalImageSrc?: string;
   sections?: SectionResult[];
   gridRows?: number;
   gridCols?: number;
   excludedSections: Set<string>;
   onToggleExclude: (sectionLabel: string) => void | Promise<void>;
+  onOpenPreview: () => void;
 }) {
   const [hoveredCell, setHoveredCell] = useState<SectionResult | null>(null);
   const [pinnedCell, setPinnedCell] = useState<SectionResult | null>(null);
+  const [imageAspectRatio, setImageAspectRatio] = useState(4 / 3);
+  const [displayImageSrc, setDisplayImageSrc] = useState(imageSrc);
+  const [panelImageSrc, setPanelImageSrc] = useState(imageSrc);
 
   const rows = clampGridSize(gridRows);
   const cols = clampGridSize(gridCols);
+  const isEditedPreview =
+    Boolean(originalImageSrc) && originalImageSrc !== imageSrc;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderDisplayImage = async () => {
+      try {
+        const softenedPreview = isEditedPreview
+          ? await softenExclusionMaskPreview(
+              imageSrc,
+              originalImageSrc || imageSrc
+            )
+          : imageSrc;
+        if (!cancelled) {
+          setDisplayImageSrc(softenedPreview);
+        }
+      } catch {
+        if (!cancelled) {
+          setDisplayImageSrc(imageSrc);
+        }
+      }
+    };
+
+    void renderDisplayImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSrc, isEditedPreview, originalImageSrc]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderPanelImage = async () => {
+      try {
+        const softenedPreview = isEditedPreview
+          ? await softenTransparentExclusionPreview(
+              imageSrc,
+              originalImageSrc || imageSrc
+            )
+          : imageSrc;
+        if (!cancelled) {
+          setPanelImageSrc(softenedPreview);
+        }
+      } catch {
+        if (!cancelled) {
+          setPanelImageSrc(imageSrc);
+        }
+      }
+    };
+
+    void renderPanelImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSrc, isEditedPreview, originalImageSrc]);
 
   const sectionMap = useMemo(() => {
     const map = new Map<string, SectionResult>();
@@ -260,6 +437,14 @@ function GridOverlayPreview({
   const activeExcluded = activeCell
     ? excludedSections.has(activeCell.sectionLabel)
     : false;
+  const activeCellHarvestStatus = activeCell
+    ? activeCell.harvestStatus ??
+      deriveHarvestStatus(
+        activeCell.yellowPercentage,
+        activeCell.greenPercentage,
+        activeCell.healthScore
+      )
+    : undefined;
 
   const handleCellClick = (section?: SectionResult) => {
     if (!section) return;
@@ -274,12 +459,54 @@ function GridOverlayPreview({
 
   return (
     <div className="space-y-3">
-      <div>
-        <img
-          src={imageSrc}
-          alt="Uploaded preview"
-          className="h-52 w-full rounded-xl object-cover"
-        />
+      <div className={originalImageSrc ? 'grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]' : ''}>
+        {originalImageSrc && (
+          <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/40">
+            <div className="flex min-h-[260px] items-center justify-center bg-slate-100 p-2">
+              <div
+                className="relative w-full max-w-full overflow-hidden rounded-xl bg-slate-100"
+                style={{ aspectRatio: `${imageAspectRatio}` }}
+              >
+                <span className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm">
+                  Original
+                </span>
+                <img
+                  src={originalImageSrc}
+                  alt="Original uploaded preview"
+                  className="h-full w-full object-contain"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        <div>
+          <button
+            type="button"
+            onClick={onOpenPreview}
+            className="block w-full"
+            title="Open full preview"
+          >
+            <div
+              className="relative w-full max-w-full overflow-hidden rounded-xl bg-slate-100"
+              style={{ aspectRatio: `${imageAspectRatio}` }}
+            >
+              <span className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm">
+                {isEditedPreview ? 'Preview: Edited' : 'Original'}
+              </span>
+              <img
+                src={panelImageSrc}
+                alt="Uploaded preview"
+                className="h-full w-full object-contain"
+                onLoad={(event) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget;
+                  if (naturalWidth > 0 && naturalHeight > 0) {
+                    setImageAspectRatio(naturalWidth / naturalHeight);
+                  }
+                }}
+              />
+            </div>
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-emerald-200 bg-white p-3">
@@ -311,11 +538,14 @@ function GridOverlayPreview({
           </span>
         </div>
 
-        <div className="relative overflow-hidden rounded-xl">
+        <div
+          className="relative mx-auto w-full max-w-full overflow-hidden rounded-xl bg-slate-100"
+          style={{ aspectRatio: `${imageAspectRatio}` }}
+        >
           <img
-            src={imageSrc}
+            src={panelImageSrc}
             alt="Grid overlay preview"
-            className="h-64 w-full object-cover"
+            className="h-full w-full object-fill"
           />
 
           <div
@@ -426,7 +656,7 @@ function GridOverlayPreview({
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-emerald-600">Status</p>
+                  <p className="text-xs text-emerald-600">Section Health Status</p>
                   <span
                     className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses(
                       activeCell.healthStatus
@@ -441,6 +671,20 @@ function GridOverlayPreview({
                   <p className="font-semibold text-emerald-900">
                     {activeCell.healthScore}
                   </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-emerald-600">Harvest Status</p>
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${harvestStatusClasses(
+                      activeCellHarvestStatus
+                    )}`}
+                  >
+                    {harvestStatusLabel(
+                      activeCellHarvestStatus,
+                      activeCell.harvestReady
+                    )}
+                  </span>
                 </div>
 
                 <div>
@@ -493,37 +737,122 @@ function GridOverlayPreview({
 }
 
 function Workspace({
+  showLatestOnly = false,
   data,
+  history,
   onClear,
   onReanalyze,
+  onUpdateImage,
+  onSelectHistoryItem,
 }: {
+  showLatestOnly?: boolean;
   data?: AnalysisHistoryItem | null;
+  history?: AnalysisHistoryItem[];
   onClear?: () => void;
   onReanalyze?: (payload: {
     excludedSections: string[];
     imageIndex?: number;
   }) => void | Promise<void>;
+  onUpdateImage?: (payload: {
+    imageIndex: number;
+    image: UploadImageItem;
+  }) => void | Promise<void>;
+  onSelectHistoryItem?: (item: AnalysisHistoryItem) => void;
 }) {
   const [excludedSections, setExcludedSections] = useState<Set<string>>(new Set());
   const [isReanalyzing, setIsReanalyzing] = useState(false);
   const [isSavingExcluded, setIsSavingExcluded] = useState(false);
+  const [isSavingImage, setIsSavingImage] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [gpsDisplayFormat, setGpsDisplayFormat] = useState<GpsDisplayFormat>('dms');
 
   const wholeFieldImageResults = data?.result.imageResults ?? [];
-  const hasWholeFieldImages =
+  const imageCount = data?.images.length ?? 0;
+  const resultImageCount = wholeFieldImageResults.length;
+  const navigableImageCount = Math.max(imageCount, resultImageCount);
+  const hasMultipleImages = navigableImageCount > 1;
+  const relatedGroupedHistoryItems = useMemo(() => {
+    if (!showLatestOnly || !data || !history || hasMultipleImages) {
+      return [];
+    }
+
+    if (data.images.length !== 1) {
+      return [];
+    }
+
+    const createdAt = new Date(data.createdAt).getTime();
+    const notesKey = normalizeGroupingText(data.notes);
+
+    return history
+      .filter((item) => {
+        if (item.images.length !== 1) return false;
+        if (item.category !== data.category) return false;
+        if (item.sourceType !== data.sourceType) return false;
+        if ((item.flightHeightM ?? null) !== (data.flightHeightM ?? null)) return false;
+        if (normalizeGroupingText(item.notes) !== notesKey) return false;
+
+        const itemCreatedAt = new Date(item.createdAt).getTime();
+        if (Number.isNaN(createdAt) || Number.isNaN(itemCreatedAt)) return item.id === data.id;
+
+        return Math.abs(itemCreatedAt - createdAt) <= 2 * 60 * 1000;
+      })
+      .sort(
+        (left, right) =>
+          new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+      );
+  }, [data, hasMultipleImages, history, showLatestOnly]);
+  const relatedGroupIndex = relatedGroupedHistoryItems.findIndex(
+    (item) => item.id === data?.id
+  );
+  const hasRelatedGroupedHistory = relatedGroupedHistoryItems.length > 1;
+  const hasPerImageWholeFieldResults =
     data?.category === 'whole_field' && wholeFieldImageResults.length > 0;
   const safeImageIndex =
-    hasWholeFieldImages && currentImageIndex >= wholeFieldImageResults.length
-      ? 0
-      : currentImageIndex;
+    navigableImageCount > 0 && currentImageIndex >= navigableImageCount ? 0 : currentImageIndex;
   const activeResult =
-    hasWholeFieldImages && wholeFieldImageResults[safeImageIndex]
-      ? wholeFieldImageResults[safeImageIndex]
-      : data?.result;
-  const activeImage =
-    hasWholeFieldImages && data?.images[safeImageIndex]
-      ? data.images[safeImageIndex]
-      : data?.images[0];
+    wholeFieldImageResults[safeImageIndex] ??
+    (hasPerImageWholeFieldResults
+      ? undefined
+      : data?.result);
+  const activeImage = data?.images[safeImageIndex] ?? data?.images[0];
+  const hasOriginalPreview =
+    Boolean(activeImage?.originalPreview) &&
+    activeImage?.originalPreview !== activeImage?.preview;
+  const sectionHarvestBreakdown = useMemo(() => {
+    const includedSections = (activeResult?.sections ?? []).filter(
+      (section) => !excludedSections.has(section.sectionLabel)
+    );
+
+    const initial = {
+      notReady: 0,
+      nearlyReady: 0,
+      ready: 0,
+      attention: 0,
+    };
+
+    return includedSections.reduce((counts, section) => {
+      const harvestStatus =
+        section.harvestStatus ??
+        deriveHarvestStatus(
+          section.yellowPercentage,
+          section.greenPercentage,
+          section.healthScore
+        );
+
+      if (harvestStatus === 'Ready to Harvest') {
+        counts.ready += 1;
+      } else if (harvestStatus === 'Nearly Ready') {
+        counts.nearlyReady += 1;
+      } else if (harvestStatus === 'Needs Attention or Overripe') {
+        counts.attention += 1;
+      } else {
+        counts.notReady += 1;
+      }
+
+      return counts;
+    }, initial);
+  }, [activeResult?.sections, excludedSections]);
 
   useEffect(() => {
     setCurrentImageIndex(0);
@@ -544,9 +873,48 @@ function Workspace({
   const isWhole = data.category === 'whole_field';
   const gridRows = clampGridSize(activeResult?.gridRows);
   const gridCols = clampGridSize(activeResult?.gridCols);
+  const hasGpsData =
+    typeof activeImage?.latitude === 'number' ||
+    typeof activeImage?.longitude === 'number' ||
+    typeof activeImage?.altitude === 'number';
+  const hasGpsCoordinates =
+    typeof activeImage?.latitude === 'number' &&
+    typeof activeImage?.longitude === 'number';
+  const googleMapsUrl = hasGpsCoordinates
+    ? `https://www.google.com/maps?q=${activeImage.latitude},${activeImage.longitude}`
+    : '';
+
+  const decimalLatitude =
+    typeof activeImage?.latitude === 'number'
+      ? String(activeImage.latitude)
+      : 'GPS not available';
+  const decimalLongitude =
+    typeof activeImage?.longitude === 'number'
+      ? String(activeImage.longitude)
+      : 'GPS not available';
+  const dmsLatitude =
+    typeof activeImage?.latitude === 'number'
+      ? toDms(activeImage.latitude, 'N', 'S')
+      : 'GPS not available';
+  const dmsLongitude =
+    typeof activeImage?.longitude === 'number'
+      ? toDms(activeImage.longitude, 'E', 'W')
+      : 'GPS not available';
+  const formattedAltitude =
+    typeof activeImage?.altitude === 'number'
+      ? `${activeImage.altitude} m`
+      : 'GPS not available';
 
   const savedSummary = {
     status: activeResult?.status ?? data.result.status,
+    harvestReady: activeResult?.harvestReady ?? data.result.harvestReady ?? false,
+    harvestStatus: (
+      activeResult?.harvestStatus ??
+      data.result.harvestStatus ??
+      ((activeResult?.harvestReady ?? data.result.harvestReady)
+        ? 'Ready to Harvest'
+        : 'Not Ready')
+    ),
     healthScore: activeResult?.healthScore ?? data.result.healthScore,
     green: activeResult?.green ?? data.result.green,
     yellow: activeResult?.yellow ?? data.result.yellow,
@@ -609,7 +977,7 @@ function Workspace({
       setIsReanalyzing(true);
       await onReanalyze({
         excludedSections: Array.from(excludedSections),
-        imageIndex: hasWholeFieldImages ? safeImageIndex : undefined,
+        imageIndex: hasPerImageWholeFieldResults ? safeImageIndex : undefined,
       });
     } finally {
       setIsReanalyzing(false);
@@ -634,6 +1002,18 @@ function Workspace({
             </button>
           )}
 
+          {onUpdateImage && (
+            <button
+              type="button"
+              onClick={() => setIsEditorOpen(true)}
+              disabled={!activeImage || isSavingImage}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <Pencil className="h-4 w-4" />
+              {isSavingImage ? 'Saving image...' : 'Edit Image'}
+            </button>
+          )}
+
           {onReanalyze && (
             <button
               type="button"
@@ -651,14 +1031,14 @@ function Workspace({
               savedSummary.status
             )}`}
           >
-            {savedSummary.status}
+            Overall Health: {savedSummary.status}
           </span>
         </div>
       </div>
 
-      <div className="grid gap-2.5 sm:grid-cols-4">
+      <div className="grid gap-2.5 sm:grid-cols-5">
         <div className="rounded-xl bg-emerald-100 p-2.5">
-          <p className="text-xs text-emerald-700">Score</p>
+          <p className="text-xs text-emerald-700">Health Points</p>
           <p className="mt-1 text-xl font-bold text-emerald-900">
             {savedSummary.healthScore}
           </p>
@@ -681,9 +1061,18 @@ function Workspace({
             {savedSummary.brown.toFixed(1)}%
           </p>
         </div>
+        <div className="rounded-xl bg-amber-50 p-2.5">
+          <p className="text-xs text-amber-700">By-Part Harvest</p>
+          <div className="mt-1 space-y-1 text-xs font-semibold text-amber-800">
+            <p>{`Ready: ${sectionHarvestBreakdown.ready}`}</p>
+            <p>{`Nearly Ready: ${sectionHarvestBreakdown.nearlyReady}`}</p>
+            <p>{`Not Ready: ${sectionHarvestBreakdown.notReady}`}</p>
+            <p>{`Attention: ${sectionHarvestBreakdown.attention}`}</p>
+          </div>
+        </div>
       </div>
 
-      <div className={`grid gap-2.5 ${isWhole ? 'sm:grid-cols-3' : 'sm:grid-cols-4'}`}>
+      <div className={`grid gap-2.5 ${isWhole ? 'sm:grid-cols-4' : 'sm:grid-cols-5'}`}>
         <div className="rounded-xl border border-emerald-200 bg-white p-2.5">
           <p className="text-xs text-emerald-600">Category</p>
           <p className="mt-1 font-semibold text-emerald-900">
@@ -699,10 +1088,53 @@ function Workspace({
         </div>
 
         <div className="rounded-xl border border-emerald-200 bg-white p-2.5">
-          <p className="text-xs text-emerald-600">Flight Height</p>
+          <p className="text-xs text-emerald-600">Altitude Source</p>
           <p className="mt-1 font-semibold text-emerald-900">
-            {data.flightHeightM ? `${data.flightHeightM} m` : '-'}
+            From image EXIF geotag
           </p>
+        </div>
+
+        <div className="rounded-xl border border-emerald-200 bg-white p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-emerald-600">GPS Data</p>
+            <select
+              value={gpsDisplayFormat}
+              onChange={(event) =>
+                setGpsDisplayFormat(event.target.value as GpsDisplayFormat)
+              }
+              className="rounded-md border border-emerald-200 bg-white px-1.5 py-1 text-[11px] font-medium text-emerald-700 outline-none focus:border-emerald-400"
+            >
+              <option value="decimal">Decimal</option>
+              <option value="dms">DMS</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+          {hasGpsData ? (
+            <>
+              <div className="mt-1 space-y-0.5 text-xs font-semibold text-emerald-900">
+                {gpsDisplayFormat !== 'dms' && <p>Latitude: {decimalLatitude}</p>}
+                {gpsDisplayFormat !== 'dms' && <p>Longitude: {decimalLongitude}</p>}
+                {gpsDisplayFormat !== 'decimal' && <p>Latitude (DMS): {dmsLatitude}</p>}
+                {gpsDisplayFormat !== 'decimal' && <p>Longitude (DMS): {dmsLongitude}</p>}
+                <p>Altitude: {formattedAltitude}</p>
+              </div>
+              {hasGpsCoordinates && (
+                <a
+                  href={googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  Open in Google Maps
+                </a>
+              )}
+            </>
+          ) : (
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              GPS not available
+            </p>
+          )}
         </div>
 
         {!isWhole && (
@@ -750,11 +1182,27 @@ function Workspace({
         </div>
       )}
 
+      {(isWhole || data.category === 'partial_field') && (
+        <p className="text-xs font-medium text-emerald-700">
+          Section Health Status Breakdown
+        </p>
+      )}
+
       <div className="rounded-2xl border border-emerald-200 bg-slate-50 p-2.5">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-emerald-900">Preview</h3>
+        <div className="mb-2 flex items-center justify-end">
           <div className="flex items-center gap-2">
-            {hasWholeFieldImages ? (
+            {hasGpsCoordinates && (
+              <a
+                href={googleMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                Google Maps
+              </a>
+            )}
+            {hasMultipleImages ? (
               <>
                 <button
                   type="button"
@@ -768,16 +1216,46 @@ function Workspace({
                   Prev
                 </button>
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                  {`Image ${safeImageIndex + 1} of ${wholeFieldImageResults.length}`}
+                  {`Image ${safeImageIndex + 1} of ${navigableImageCount}`}
                 </span>
                 <button
                   type="button"
                   onClick={() =>
                     setCurrentImageIndex((prev) =>
-                      prev < wholeFieldImageResults.length - 1 ? prev + 1 : prev
+                      prev < navigableImageCount - 1 ? prev + 1 : prev
                     )
                   }
-                  disabled={safeImageIndex >= wholeFieldImageResults.length - 1}
+                  disabled={safeImageIndex >= navigableImageCount - 1}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-xs font-medium text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </>
+            ) : hasRelatedGroupedHistory ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (relatedGroupIndex <= 0) return;
+                    onSelectHistoryItem?.(relatedGroupedHistoryItems[relatedGroupIndex - 1]);
+                  }}
+                  disabled={relatedGroupIndex <= 0}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-xs font-medium text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Prev
+                </button>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                  {`Upload ${relatedGroupIndex + 1} of ${relatedGroupedHistoryItems.length}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (relatedGroupIndex >= relatedGroupedHistoryItems.length - 1) return;
+                    onSelectHistoryItem?.(relatedGroupedHistoryItems[relatedGroupIndex + 1]);
+                  }}
+                  disabled={relatedGroupIndex >= relatedGroupedHistoryItems.length - 1}
                   className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-xs font-medium text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Next
@@ -792,24 +1270,66 @@ function Workspace({
           </div>
         </div>
 
-        <div className="rounded-2xl bg-white p-2.5">
+        <div
+          className={
+            activeImage &&
+            hasOriginalPreview &&
+            !(isWhole || data.category === 'partial_field')
+              ? 'grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]'
+              : 'rounded-2xl bg-white p-2.5'
+          }
+        >
+          {activeImage &&
+            hasOriginalPreview &&
+            !(isWhole || data.category === 'partial_field') && (
+            <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/40">
+              <div className="border-b border-emerald-100 px-4 py-3">
+                <p className="text-sm font-semibold text-emerald-900">
+                  Original
+                </p>
+                <p className="mt-1 text-xs text-emerald-600">
+                  Untouched uploaded image for comparison.
+                </p>
+              </div>
+              <div className="flex min-h-[220px] items-center justify-center bg-slate-100 p-3">
+                <img
+                  src={activeImage.originalPreview}
+                  alt="Original analysis preview"
+                  className="max-h-72 w-full rounded-xl object-contain"
+                />
+              </div>
+            </div>
+          )}
           {activeImage ? (
-            isWhole || data.category === 'partial_field' ? (
-              <GridOverlayPreview
-                imageSrc={activeImage.preview}
-                sections={activeResult?.sections}
-                gridRows={gridRows}
-                gridCols={gridCols}
-                excludedSections={excludedSections}
-                onToggleExclude={toggleExcludeSection}
-              />
-            ) : (
-              <img
-                src={activeImage.preview}
-                alt="Analysis preview"
-                className="h-44 w-full rounded-xl object-cover"
-              />
-            )
+            <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/40">
+              <div className="bg-slate-100 p-3">
+                {isWhole || data.category === 'partial_field' ? (
+                  <GridOverlayPreview
+                    imageSrc={activeImage.preview}
+                    originalImageSrc={activeImage.originalPreview}
+                    sections={activeResult?.sections}
+                    gridRows={gridRows}
+                    gridCols={gridCols}
+                    excludedSections={excludedSections}
+                    onToggleExclude={toggleExcludeSection}
+                    onOpenPreview={() => setIsEditorOpen(true)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditorOpen(true)}
+                    className="block w-full"
+                    title="Open full preview"
+                  >
+                    <img
+                      src={activeImage.preview}
+                      alt="Analysis preview"
+                      className="max-h-72 w-full rounded-xl bg-slate-100 object-contain"
+                    />
+                  </button>
+                )}
+              </div>
+            </div>
           ) : (
               <div className="flex h-44 items-center justify-center text-5xl">
               📊
@@ -824,6 +1344,46 @@ function Workspace({
           {activeResult?.interpretation ?? data.result.interpretation}
         </p>
       </div>
+
+      {activeImage && isEditorOpen && onUpdateImage && (
+        <ImageEditorModal
+          open
+          imageSrc={activeImage.imageData || activeImage.preview}
+          originalImageSrc={activeImage.originalPreview}
+          fileName={activeImage.file?.name || `analysis-image-${safeImageIndex + 1}.png`}
+          title={`Edit ${hasMultipleImages ? `Image ${safeImageIndex + 1}` : 'Analysis Image'}`}
+          gridRows={gridRows}
+          gridCols={gridCols}
+          currentImageIndex={safeImageIndex}
+          totalImages={navigableImageCount}
+          onPrevImage={() =>
+            setCurrentImageIndex((prev) => (prev > 0 ? prev - 1 : prev))
+          }
+          onNextImage={() =>
+            setCurrentImageIndex((prev) =>
+              prev < navigableImageCount - 1 ? prev + 1 : prev
+            )
+          }
+          onClose={() => setIsEditorOpen(false)}
+          onSave={async ({ imageData, preview, file }) => {
+            try {
+              setIsSavingImage(true);
+              await onUpdateImage({
+                imageIndex: safeImageIndex,
+                image: {
+                  ...activeImage,
+                  file,
+                  imageData,
+                  preview,
+                },
+              });
+              setIsEditorOpen(false);
+            } finally {
+              setIsSavingImage(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -841,12 +1401,14 @@ function History({
 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
-  const totalPages = Math.max(1, Math.ceil(history.length / DISPLAY_LIMIT));
+  const displayLimit =
+    historyView === 'card' ? CARD_DISPLAY_LIMIT : LIST_DISPLAY_LIMIT;
+  const totalPages = Math.max(1, Math.ceil(history.length / displayLimit));
   const safePage = Math.min(currentPage, totalPages);
-  const startIndex = (safePage - 1) * DISPLAY_LIMIT;
+  const startIndex = (safePage - 1) * displayLimit;
   const displayed = showAll
     ? history
-    : history.slice(startIndex, startIndex + DISPLAY_LIMIT);
+    : history.slice(startIndex, startIndex + displayLimit);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -864,161 +1426,177 @@ function History({
 
   return (
     <div className="h-full">
-      <div className={historyView === 'card' ? 'grid gap-3 md:grid-cols-2' : 'space-y-3'}>
-        {displayed.map((item) => {
-          const isSelected = selectedHistoryId === item.id;
+      <div className="max-h-[720px] overflow-y-auto pr-1">
+        <div className={historyView === 'card' ? 'grid gap-3 md:grid-cols-2' : 'space-y-3'}>
+          {displayed.map((item) => {
+            const isSelected = selectedHistoryId === item.id;
 
-          if (historyView === 'card') {
+            if (historyView === 'card') {
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectHistoryItem?.(item)}
+                  className={`w-full overflow-hidden rounded-2xl border text-left transition ${
+                    isSelected
+                      ? 'border-emerald-400 bg-emerald-50 shadow-sm'
+                      : 'border-emerald-200 bg-white hover:bg-emerald-50'
+                  }`}
+                >
+                  <div className="h-24 w-full overflow-hidden bg-emerald-100">
+                    {item.images[0] ? (
+                      <img
+                        src={item.images[0].preview}
+                        alt="History preview"
+                        className="h-full w-full bg-slate-100 object-contain"
+                      />
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-3 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-emerald-900">
+                        {categoryLabel(item.category)}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
+                          item.result.status
+                        )}`}
+                      >
+                      Overall Health: {item.result.status}
+                    </span>
+                  </div>
+
+                    <p className="text-[11px] font-medium text-amber-700">
+                      Harvest Status: {harvestStatusLabel(
+                        item.result.harvestStatus,
+                        item.result.harvestReady
+                      )}
+                    </p>
+
+                    <div className="flex items-center gap-1 text-[11px] text-emerald-700">
+                      <Clock className="h-3 w-3 text-emerald-500" />
+                      <span className="truncate">
+                        {new Date(item.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                      <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
+                        <p className="text-emerald-600">Score</p>
+                        <p className="font-semibold text-emerald-900">
+                          {item.result.healthScore}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Source</p>
+                        <p className="font-semibold text-slate-800">
+                          {sourceTypeLabel(item.sourceType)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Sections</p>
+                        <p className="font-semibold text-slate-800">
+                          {item.result.totalSections ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Images</p>
+                        <p className="font-semibold text-slate-800">
+                          {item.images.length}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            }
+
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => onSelectHistoryItem?.(item)}
-                className={`w-full overflow-hidden rounded-2xl border text-left transition ${
+                className={`w-full rounded-xl border p-3 text-left transition ${
                   isSelected
                     ? 'border-emerald-400 bg-emerald-50 shadow-sm'
                     : 'border-emerald-200 bg-white hover:bg-emerald-50'
                 }`}
               >
-                <div className="h-24 w-full overflow-hidden bg-emerald-100">
-                  {item.images[0] ? (
-                    <img
-                      src={item.images[0].preview}
-                      alt="History preview"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : null}
-                </div>
+                <div className="flex items-start gap-4">
+                  <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-emerald-100">
+                    {item.images[0] ? (
+                      <img
+                        src={item.images[0].preview}
+                        alt="History preview"
+                        className="h-full w-full bg-slate-100 object-contain"
+                      />
+                    ) : null}
+                  </div>
 
-                <div className="space-y-3 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-emerald-900">
-                      {categoryLabel(item.category)}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-emerald-900">
+                        {categoryLabel(item.category)}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
+                          item.result.status
+                        )}`}
+                      >
+                          Overall Health: {item.result.status}
+                        </span>
+                      </div>
+
+                    <p className="text-[11px] font-medium text-amber-700">
+                      Harvest Status: {harvestStatusLabel(
+                        item.result.harvestStatus,
+                        item.result.harvestReady
+                      )}
                     </p>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
-                        item.result.status
-                      )}`}
-                    >
-                      {item.result.status}
-                    </span>
-                  </div>
 
-                  <div className="flex items-center gap-1 text-[11px] text-emerald-700">
-                    <Clock className="h-3 w-3 text-emerald-500" />
-                    <span className="truncate">
-                      {new Date(item.createdAt).toLocaleString()}
-                    </span>
-                  </div>
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-700">
+                      <Clock className="h-3 w-3 text-emerald-500" />
+                      <span className="truncate">
+                        {new Date(item.createdAt).toLocaleString()}
+                      </span>
+                    </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                    <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
-                      <p className="text-emerald-600">Score</p>
-                      <p className="font-semibold text-emerald-900">
-                        {item.result.healthScore}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Source</p>
-                      <p className="font-semibold text-slate-800">
-                        {sourceTypeLabel(item.sourceType)}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Sections</p>
-                      <p className="font-semibold text-slate-800">
-                        {item.result.totalSections ?? 0}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Images</p>
-                      <p className="font-semibold text-slate-800">
-                        {item.images.length}
-                      </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                      <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
+                        <p className="text-emerald-600">Score</p>
+                        <p className="font-semibold text-emerald-900">
+                          {item.result.healthScore}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Source</p>
+                        <p className="font-semibold text-slate-800">
+                          {sourceTypeLabel(item.sourceType)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Sections</p>
+                        <p className="font-semibold text-slate-800">
+                          {item.result.totalSections ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1">
+                        <p className="text-slate-500">Images</p>
+                        <p className="font-semibold text-slate-800">
+                          {item.images.length}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </button>
             );
-          }
-
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelectHistoryItem?.(item)}
-              className={`w-full rounded-xl border p-3 text-left transition ${
-                isSelected
-                  ? 'border-emerald-400 bg-emerald-50 shadow-sm'
-                  : 'border-emerald-200 bg-white hover:bg-emerald-50'
-              }`}
-            >
-              <div className="flex items-start gap-4">
-                <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-emerald-100">
-                  {item.images[0] ? (
-                    <img
-                      src={item.images[0].preview}
-                      alt="History preview"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : null}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-emerald-900">
-                      {categoryLabel(item.category)}
-                    </p>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
-                        item.result.status
-                      )}`}
-                    >
-                      {item.result.status}
-                    </span>
-                  </div>
-
-                  <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-700">
-                    <Clock className="h-3 w-3 text-emerald-500" />
-                    <span className="truncate">
-                      {new Date(item.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                    <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
-                      <p className="text-emerald-600">Score</p>
-                      <p className="font-semibold text-emerald-900">
-                        {item.result.healthScore}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Source</p>
-                      <p className="font-semibold text-slate-800">
-                        {sourceTypeLabel(item.sourceType)}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Sections</p>
-                      <p className="font-semibold text-slate-800">
-                        {item.result.totalSections ?? 0}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-1">
-                      <p className="text-slate-500">Images</p>
-                      <p className="font-semibold text-slate-800">
-                        {item.images.length}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </button>
-          );
-        })}
+          })}
+        </div>
       </div>
 
-      {history.length > DISPLAY_LIMIT && (
+      {history.length > displayLimit && (
         <div className="flex w-full flex-col items-center justify-center gap-2 pt-3 text-center">
           <div className="mx-auto flex items-center justify-center gap-2">
             <button
@@ -1070,11 +1648,22 @@ export function AnalysisResults({
   historyView = 'list',
   onClear,
   onReanalyze,
+  onUpdateImage,
   onSelectHistoryItem,
   selectedHistoryId,
 }: Props) {
   if (showLatestOnly) {
-    return <Workspace data={data} onClear={onClear} onReanalyze={onReanalyze} />;
+    return (
+      <Workspace
+        showLatestOnly={showLatestOnly}
+        data={data}
+        history={history}
+        onClear={onClear}
+        onReanalyze={onReanalyze}
+        onUpdateImage={onUpdateImage}
+        onSelectHistoryItem={onSelectHistoryItem}
+      />
+    );
   }
 
   return (
