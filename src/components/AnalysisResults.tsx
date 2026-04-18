@@ -1061,13 +1061,8 @@ function Workspace({
           </p>
         </div>
         <div className="rounded-xl bg-amber-50 p-2.5">
-          <p className="text-xs text-amber-700">By-Part Harvest</p>
-          <div className="mt-1 space-y-1 text-xs font-semibold text-amber-800">
-            <p>{`Ready: ${sectionHarvestBreakdown.ready}`}</p>
-            <p>{`Nearly Ready: ${sectionHarvestBreakdown.nearlyReady}`}</p>
-            <p>{`Not Ready: ${sectionHarvestBreakdown.notReady}`}</p>
-            <p>{`Attention: ${sectionHarvestBreakdown.attention}`}</p>
-          </div>
+          <p className="text-xs text-amber-700">Overall Health</p>
+          <p className="mt-1 text-xl font-bold text-amber-800">Moderate</p>
         </div>
       </div>
 
