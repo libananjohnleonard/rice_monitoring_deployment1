@@ -1047,9 +1047,9 @@ function Workspace({
 
       <div className="grid gap-2.5 sm:grid-cols-5">
         <div className="rounded-xl bg-emerald-100 p-2.5">
-          <p className="text-xs text-emerald-700">Health Points</p>
+          <p className="text-xs text-emerald-700">Health Status</p>
           <p className="mt-1 text-xl font-bold text-emerald-900">
-            {savedSummary.healthScore}
+            {`(${savedSummary.healthScore}) ${savedSummary.status}`}
           </p>
         </div>
         <div className="rounded-xl bg-green-50 p-2.5">

@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { HomeWorkspace } from '../components/HomeWorkspace';
 import type { AnalysisInput } from '../components/UploadImages';
-import type { AnalysisHistoryItem } from '../components/AnalysisResults';
+import {
+  resolveHarvestStatus,
+  type AnalysisHistoryItem,
+} from '../components/AnalysisResults';
 import {
   analyzeBatchInBrowser,
   summarizeSectionsForReanalysis,
@@ -14,7 +17,7 @@ const HISTORY_FETCH_LIMIT = 20;
 
 function currentStatusLabel(result?: AnalysisHistoryItem['result'] | null) {
   if (!result) return 'Waiting';
-  const harvestStatus = result.harvestStatus ?? (result.harvestReady ? 'Ready to Harvest' : 'Not Ready');
+  const harvestStatus = resolveHarvestStatus(result);
   return `${result.status} - ${harvestStatus}`;
 }
 
@@ -38,7 +41,7 @@ export function HomePage() {
   const fetchHistory = async () => {
     try {
       const data = await fetchJson<AnalysisHistoryItem[]>(
-        `${API_BASE_URL}/api/analyses?limit=${HISTORY_FETCH_LIMIT}`,
+        `${API_BASE_URL}/api/analyses?limit=${HISTORY_FETCH_LIMIT}&detailed=true`,
         {
           cache: 'no-store',
         }
