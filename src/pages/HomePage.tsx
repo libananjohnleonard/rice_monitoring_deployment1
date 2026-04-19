@@ -41,7 +41,7 @@ export function HomePage() {
   const fetchHistory = async () => {
     try {
       const data = await fetchJson<AnalysisHistoryItem[]>(
-        `${API_BASE_URL}/api/analyses?limit=${HISTORY_FETCH_LIMIT}&detailed=true`,
+        `${API_BASE_URL}/api/analyses?limit=${HISTORY_FETCH_LIMIT}`,
         {
           cache: 'no-store',
         }

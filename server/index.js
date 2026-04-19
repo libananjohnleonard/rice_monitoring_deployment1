@@ -687,7 +687,13 @@ app.get('/api/analyses', async (req, res) => {
               drone_model,
               latitude,
               longitude,
-              altitude
+              altitude,
+              CASE
+                WHEN ROW_NUMBER() OVER (
+                  ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+                ) = 1 THEN image_data
+                ELSE NULL
+              END AS preview_image_data
             FROM plant_images
             WHERE batch_id = $1
             ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
@@ -714,7 +720,7 @@ app.get('/api/analyses', async (req, res) => {
                 : img.image_order != null
                   ? Number(img.image_order)
                   : undefined,
-            preview: '',
+            preview: img.preview_image_data ?? '',
             imageData: '',
             originalPreview: '',
             capturedAt: img.captured_at,
