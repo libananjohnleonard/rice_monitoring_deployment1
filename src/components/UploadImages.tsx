@@ -42,6 +42,11 @@ const CATEGORY_OPTIONS: {
     label: 'Whole Field',
     hint: 'Grid-based aerial analysis',
   },
+  {
+    value: 'partial_field',
+    label: 'Partial Field',
+    hint: 'Focused field-area analysis with a smaller grid',
+  },
 ];
 
 export function CameraCapture({ onAnalyze }: Props) {

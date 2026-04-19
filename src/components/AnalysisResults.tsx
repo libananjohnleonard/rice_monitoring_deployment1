@@ -296,8 +296,8 @@ function EmptyWorkspace() {
           <p className="mt-1 font-medium text-emerald-900">Grid analysis</p>
         </div>
         <div className="rounded-xl border border-emerald-200 bg-slate-50 p-3">
-          <p className="text-xs text-slate-700">Section</p>
-          <p className="mt-1 font-medium text-slate-900">Focused area</p>
+          <p className="text-xs text-slate-700">Partial Field</p>
+          <p className="mt-1 font-medium text-slate-900">Focused area analysis</p>
         </div>
       </div>
 
