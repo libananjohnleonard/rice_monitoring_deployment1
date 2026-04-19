@@ -24,7 +24,7 @@ export function AboutPage() {
           </li>
           <li className="flex items-start gap-2">
             <span className="inline-block h-5 w-5 shrink-0" />
-            <span>Overall Health Status and Health Points (0-100): Healthy, Moderate, or Poor</span>
+            <span>Overall Health Status and score (0-100): Healthy (70-100), Moderate (40-69), or Poor (0-39)</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="inline-block h-5 w-5 shrink-0" />
@@ -48,7 +48,7 @@ export function AboutPage() {
         <p className="mb-6 text-emerald-700">
           Each captured image is analyzed by measuring the proportion of green, yellow, and brown pixels. Higher
           green suggests healthy growth; more yellow can mean ripening or stress; brown may indicate disease or
-          nutrient issues. The system combines these into an Overall Health Status, Health Points, and Harvest
+          nutrient issues. The system combines these into an Overall Health Status, score, and Harvest
           Status. For whole-field and partial-field images, it also shows Section Health Status for each grid area.
         </p>
 

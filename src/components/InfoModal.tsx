@@ -80,15 +80,15 @@ export default function InfoModal({ isOpen, setIsOpen }: Props) {
                 <div className="grid gap-3">
                   <div className="rounded-xl border-l-4 border-emerald-500 bg-emerald-50/80 p-3">
                     <h4 className="mb-1 font-semibold text-emerald-700">Healthy (70-100)</h4>
-                    <p className="text-sm text-emerald-600">Strong growth with high green percentage</p>
+                    <p className="text-sm text-emerald-600">Strong growth with a high green percentage.</p>
                   </div>
                   <div className="rounded-xl border-l-4 border-amber-500 bg-amber-50/80 p-3">
                     <h4 className="mb-1 font-semibold text-amber-700">Moderate (40-69)</h4>
-                    <p className="text-sm text-amber-600">Mixed condition with some ripening or mild stress</p>
+                    <p className="text-sm text-amber-600">Mixed condition with some ripening or mild stress.</p>
                   </div>
                   <div className="rounded-xl border-l-4 border-red-500 bg-red-50/80 p-3">
                     <h4 className="mb-1 font-semibold text-red-700">Poor (0-39)</h4>
-                    <p className="text-sm text-red-600">High brown can suggest stress, pests, or possible disease</p>
+                    <p className="text-sm text-red-600">High brown percentage may indicate stress, pests, or possible disease.</p>
                   </div>
                 </div>
               </div>

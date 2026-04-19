@@ -110,8 +110,8 @@ function isExcludedMaskPixel({ r, g, b }: RGB) {
 }
 
 function getStatusFromScore(score: number): 'Healthy' | 'Moderate' | 'Poor' {
-  if (score >= 75) return 'Healthy';
-  if (score >= 55) return 'Moderate';
+  if (score >= 70) return 'Healthy';
+  if (score >= 40) return 'Moderate';
   return 'Poor';
 }
 

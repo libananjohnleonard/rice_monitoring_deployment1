@@ -110,8 +110,8 @@ function round1(value) {
 }
 
 function getStatusFromScore(score) {
-  if (score >= 75) return 'Healthy';
-  if (score >= 55) return 'Moderate';
+  if (score >= 70) return 'Healthy';
+  if (score >= 40) return 'Moderate';
   return 'Poor';
 }
 
@@ -733,7 +733,11 @@ app.get('/api/analyses', async (req, res) => {
           result: {
             status: row.health_status,
             harvestReady: row.harvest_ready,
-            harvestStatus: row.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+            harvestStatus: getHarvestStatus(
+              Number(row.yellow_percentage),
+              Number(row.green_percentage),
+              Number(row.health_score)
+            ),
             healthScore: row.health_score,
             green: Number(row.green_percentage),
             yellow: Number(row.yellow_percentage),
@@ -854,7 +858,11 @@ app.get('/api/analyses', async (req, res) => {
           return {
             status: row.health_status,
             harvestReady: row.harvest_ready,
-            harvestStatus: row.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+            harvestStatus: getHarvestStatus(
+              Number(row.yellow_percentage),
+              Number(row.green_percentage),
+              Number(row.health_score)
+            ),
             healthScore: row.health_score,
             green: Number(row.green_percentage),
             yellow: Number(row.yellow_percentage),
@@ -1057,7 +1065,11 @@ app.get('/api/analyses/:batchId', async (req, res) => {
       result = {
         status: detailRow.health_status,
         harvestReady: detailRow.harvest_ready,
-        harvestStatus: detailRow.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+        harvestStatus: getHarvestStatus(
+          Number(detailRow.yellow_percentage),
+          Number(detailRow.green_percentage),
+          Number(detailRow.health_score)
+        ),
         healthScore: detailRow.health_score,
         green: Number(detailRow.green_percentage),
         yellow: Number(detailRow.yellow_percentage),
