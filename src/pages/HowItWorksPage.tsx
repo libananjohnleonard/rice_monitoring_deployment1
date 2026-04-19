@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
+import editImage from '../image/Edit_Image.png';
 import step3Image from '../image/Step-3.png';
 import step4Image from '../image/Step-4.png';
 import step5Image from '../image/Step-5.png';
-import step6Image from '../image/Step-6.png';
+import step6Image from '../image/Step-6-new.png';
 
 type StepItem = {
   number: number;
@@ -99,7 +100,7 @@ const harvestStatuses = [
 export function HowItWorksPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8">
-      <div className="overflow-hidden rounded-3xl border border-emerald-200 bg-white/95 shadow-sm">
+      <div className="overflow-hidden rounded-3xl border border-emerald-200 bg-transparent shadow-sm">
         <div className="border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-yellow-50 px-6 py-6">
           <h1 className="text-3xl font-bold text-emerald-900">
             How the System Works?
@@ -178,6 +179,13 @@ export function HowItWorksPage() {
                 The Image Editor Modal will appear so you can adjust the analysis
                 area before running the results again.
               </p>
+              <div className="mt-4 overflow-hidden rounded-2xl border border-amber-200 bg-white p-3">
+                <img
+                  src={editImage}
+                  alt="Edit Image feature in the Analysis Workspace"
+                  className="w-full rounded-xl object-contain"
+                />
+              </div>
             </div>
           </section>
 
@@ -236,7 +244,31 @@ export function HowItWorksPage() {
                   </p>
                 </div>
               </div>
+
+              <div className="mt-4 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/40 p-3">
+                <img
+                  src={editImage}
+                  alt="Re-analyze flow after editing the image"
+                  className="w-full rounded-xl object-contain"
+                />
+              </div>
             </div>
+          </section>
+
+          <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+            <h2 className="text-xl font-semibold text-emerald-900">
+              Image Size and Accuracy
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-emerald-700">
+              Image size and quality can affect analysis accuracy. Clear drone
+              images with good lighting and enough visible crop detail help the
+              system detect green, yellow, and brown areas more reliably.
+            </p>
+            <p className="mt-3 text-sm leading-6 text-emerald-700">
+              For best results, use images that clearly show the field area you
+              want to analyze and avoid unnecessary objects or very small,
+              low-resolution captures.
+            </p>
           </section>
 
           <section className="space-y-5">
