@@ -1438,7 +1438,7 @@ function History({
                   }`}
                 >
                   <div className="h-24 w-full overflow-hidden bg-emerald-100">
-                    {item.images[0] ? (
+                    {item.images[0]?.preview ? (
                       <img
                         src={item.images[0].preview}
                         alt="History preview"
@@ -1519,7 +1519,7 @@ function History({
               >
                 <div className="flex items-start gap-4">
                   <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-emerald-100">
-                    {item.images[0] ? (
+                    {item.images[0]?.preview ? (
                       <img
                         src={item.images[0].preview}
                         alt="History preview"

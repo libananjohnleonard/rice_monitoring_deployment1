@@ -518,11 +518,17 @@ export function ManageUploadsPage() {
                             key={image.id ?? `${item.id}-${index}`}
                             className="w-24 overflow-hidden rounded-xl border border-emerald-200 bg-white"
                           >
-                            <img
-                              src={image.preview}
-                              alt={`Upload ${index + 1}`}
-                              className="h-20 w-full object-cover"
-                            />
+                            {image.preview ? (
+                              <img
+                                src={image.preview}
+                                alt={`Upload ${index + 1}`}
+                                className="h-20 w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-20 w-full items-center justify-center bg-emerald-50 text-[11px] font-medium text-emerald-600">
+                                No preview
+                              </div>
+                            )}
                             <div className="px-2 py-1.5 text-[11px] font-medium text-emerald-700">
                               Image {index + 1}
                             </div>
@@ -574,7 +580,7 @@ export function ManageUploadsPage() {
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-start gap-3">
-                          {item.images[0] ? (
+                          {item.images[0]?.preview ? (
                             <img
                               src={item.images[0].preview}
                               alt="Upload preview"

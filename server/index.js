@@ -600,6 +600,7 @@ app.post('/api/analysis/save', async (req, res) => {
 app.get('/api/analyses', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const detailed = String(req.query.detailed || '').toLowerCase() === 'true';
 
     const batchResult = await pool.query(
       `
@@ -644,14 +645,83 @@ app.get('/api/analyses', async (req, res) => {
     const results = [];
     for (const row of rows) {
       const imagesRes = await pool.query(
-        `
-        SELECT *
-        FROM plant_images
-        WHERE batch_id = $1
-        ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
-        `,
+        detailed
+          ? `
+            SELECT *
+            FROM plant_images
+            WHERE batch_id = $1
+            ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+          `
+          : `
+            SELECT
+              id,
+              image_order,
+              captured_at,
+              source_type,
+              drone_model,
+              latitude,
+              longitude,
+              altitude
+            FROM plant_images
+            WHERE batch_id = $1
+            ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+          `,
         [row.batch_id]
       );
+
+      if (!detailed) {
+        results.push({
+          id: row.batch_id,
+          createdAt: row.batch_created_at,
+          category: row.category,
+          flightHeightM: row.flight_height_m
+            ? Number(row.flight_height_m)
+            : undefined,
+          sourceType: row.source_type,
+          notes: row.notes,
+          images: imagesRes.rows.map((img) => ({
+            id: img.id,
+            file: null,
+            imageOrder:
+              typeof img.image_order === 'number'
+                ? img.image_order
+                : img.image_order != null
+                  ? Number(img.image_order)
+                  : undefined,
+            preview: '',
+            imageData: '',
+            originalPreview: '',
+            capturedAt: img.captured_at,
+            sourceType: img.source_type,
+            droneModel: img.drone_model,
+            latitude: img.latitude ? Number(img.latitude) : undefined,
+            longitude: img.longitude ? Number(img.longitude) : undefined,
+            altitude: img.altitude ? Number(img.altitude) : undefined,
+          })),
+          result: {
+            status: row.health_status,
+            harvestReady: row.harvest_ready,
+            harvestStatus: row.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+            healthScore: row.health_score,
+            green: Number(row.green_percentage),
+            yellow: Number(row.yellow_percentage),
+            brown: Number(row.brown_percentage),
+            recommendations: row.recommendations,
+            totalSections: row.total_sections,
+            healthySections: row.healthy_sections,
+            warningSections: row.warning_sections,
+            poorSections: row.poor_sections,
+            gridEstimate: row.grid_estimate,
+            interpretation: row.interpretation,
+            gridRows: row.grid_rows,
+            gridCols: row.grid_cols,
+            analysisVersion: row.analysis_version,
+            parentAnalysisResultId: row.parent_analysis_result_id,
+            sections: [],
+          },
+        });
+        continue;
+      }
 
       const sectionsRes = await pool.query(
         `
@@ -777,6 +847,236 @@ app.get('/api/analyses', async (req, res) => {
     res.json(results);
   } catch (err) {
     console.error('Fetch analyses error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/analyses/:batchId', async (req, res) => {
+  try {
+    const batchId = req.params.batchId;
+
+    const response = await pool.query(
+      `
+      SELECT
+        ab.id AS batch_id,
+        ab.category,
+        ab.flight_height_m,
+        ab.source_type,
+        ab.notes,
+        ab.created_at AS batch_created_at,
+
+        ar.id AS analysis_result_id,
+        ar.health_status,
+        ar.health_score,
+        ar.green_percentage,
+        ar.yellow_percentage,
+        ar.brown_percentage,
+        ar.harvest_ready,
+        ar.recommendations,
+        ar.interpretation,
+        ar.total_sections,
+        ar.healthy_sections,
+        ar.warning_sections,
+        ar.poor_sections,
+        ar.grid_estimate,
+        ar.grid_rows,
+        ar.grid_cols,
+        ar.analysis_version,
+        ar.parent_analysis_result_id,
+        ar.analyzed_at
+      FROM analysis_batches ab
+      JOIN analysis_results ar ON ar.batch_id = ab.id
+      WHERE ab.id = $1
+      ORDER BY ar.analyzed_at DESC
+      LIMIT 1
+      `,
+      [batchId]
+    );
+
+    if (response.rows.length === 0) {
+      res.status(404).json({ error: 'Analysis not found' });
+      return;
+    }
+
+    const row = response.rows[0];
+    const detailResponse = await pool.query(
+      `
+      SELECT
+        ab.id AS batch_id,
+        ab.category,
+        ab.flight_height_m,
+        ab.source_type,
+        ab.notes,
+        ab.created_at AS batch_created_at,
+
+        ar.id AS analysis_result_id,
+        ar.health_status,
+        ar.health_score,
+        ar.green_percentage,
+        ar.yellow_percentage,
+        ar.brown_percentage,
+        ar.harvest_ready,
+        ar.recommendations,
+        ar.interpretation,
+        ar.total_sections,
+        ar.healthy_sections,
+        ar.warning_sections,
+        ar.poor_sections,
+        ar.grid_estimate,
+        ar.grid_rows,
+        ar.grid_cols,
+        ar.analysis_version,
+        ar.parent_analysis_result_id,
+        ar.analyzed_at
+      FROM analysis_batches ab
+      JOIN analysis_results ar ON ar.batch_id = ab.id
+      WHERE ab.id = $1
+      ORDER BY ar.analyzed_at DESC
+      LIMIT 1
+      `,
+      [row.batch_id]
+    );
+
+    req.query.detailed = 'true';
+    req.query.limit = '1';
+    const rowProxy = detailResponse.rows;
+
+    const imagesRes = await pool.query(
+      `
+      SELECT *
+      FROM plant_images
+      WHERE batch_id = $1
+      ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+      `,
+      [row.batch_id]
+    );
+
+    const sectionsRes = await pool.query(
+      `
+      SELECT *
+      FROM analysis_sections
+      WHERE analysis_result_id = $1
+      ORDER BY level ASC, row_index ASC, col_index ASC
+      `,
+      [row.analysis_result_id]
+    );
+
+    const mappedSections = sectionsRes.rows.map((section) => ({
+      id: section.id,
+      plantImageId: section.plant_image_id,
+      sectionLabel: section.section_label,
+      rowIndex: section.row_index,
+      colIndex: section.col_index,
+      healthStatus: section.health_status,
+      healthScore: section.health_score,
+      greenPercentage: Number(section.green_percentage),
+      yellowPercentage: Number(section.yellow_percentage),
+      brownPercentage: Number(section.brown_percentage),
+      recommendations: section.recommendations,
+      isExcluded: section.is_excluded,
+      excludeReason: section.exclude_reason,
+      parentSectionId: section.parent_section_id,
+      level: section.level,
+      gridRows: section.grid_rows,
+      gridCols: section.grid_cols,
+    }));
+
+    const detailRow = rowProxy[0];
+    let result;
+
+    if (detailRow.category === 'whole_field') {
+      const hasImageLinkedSections = mappedSections.some(
+        (section) => section.plantImageId
+      );
+      const imageResults = imagesRes.rows
+        .map((img, imageIndex) => {
+          const imageSections = hasImageLinkedSections
+            ? mappedSections.filter((section) => section.plantImageId === img.id)
+            : imageIndex === 0
+              ? mappedSections
+              : [];
+
+          if (imageSections.length === 0) {
+            return null;
+          }
+
+          const summary = summarizeSections(imageSections, detailRow.category);
+
+          return {
+            ...summary,
+            imageIndex,
+            imageId: img.id,
+            imageLabel: `Whole Field ${imageIndex + 1}`,
+          };
+        })
+        .filter(Boolean);
+
+      if (imageResults.length > 0) {
+        result = {
+          ...summarizeWholeFieldImageResults(imageResults),
+          recommendations: detailRow.recommendations,
+          analysisVersion: detailRow.analysis_version,
+          parentAnalysisResultId: detailRow.parent_analysis_result_id,
+        };
+      }
+    }
+
+    if (!result) {
+      result = {
+        status: detailRow.health_status,
+        harvestReady: detailRow.harvest_ready,
+        harvestStatus: detailRow.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+        healthScore: detailRow.health_score,
+        green: Number(detailRow.green_percentage),
+        yellow: Number(detailRow.yellow_percentage),
+        brown: Number(detailRow.brown_percentage),
+        recommendations: detailRow.recommendations,
+        totalSections: detailRow.total_sections,
+        healthySections: detailRow.healthy_sections,
+        warningSections: detailRow.warning_sections,
+        poorSections: detailRow.poor_sections,
+        gridEstimate: detailRow.grid_estimate,
+        interpretation: detailRow.interpretation,
+        gridRows: detailRow.grid_rows,
+        gridCols: detailRow.grid_cols,
+        analysisVersion: detailRow.analysis_version,
+        parentAnalysisResultId: detailRow.parent_analysis_result_id,
+        sections: mappedSections,
+      };
+    }
+
+    res.json({
+      id: detailRow.batch_id,
+      createdAt: detailRow.batch_created_at,
+      category: detailRow.category,
+      flightHeightM: detailRow.flight_height_m
+        ? Number(detailRow.flight_height_m)
+        : undefined,
+      sourceType: detailRow.source_type,
+      notes: detailRow.notes,
+      images: imagesRes.rows.map((img) => ({
+        id: img.id,
+        file: null,
+        imageOrder:
+          typeof img.image_order === 'number'
+            ? img.image_order
+            : img.image_order != null
+              ? Number(img.image_order)
+              : undefined,
+        preview: img.image_data,
+        imageData: img.image_data,
+        originalPreview: img.original_image_data ?? img.image_data,
+        capturedAt: img.captured_at,
+        sourceType: img.source_type,
+        droneModel: img.drone_model,
+        latitude: img.latitude ? Number(img.latitude) : undefined,
+        longitude: img.longitude ? Number(img.longitude) : undefined,
+        altitude: img.altitude ? Number(img.altitude) : undefined,
+      })),
+      result,
+    });
+  } catch (err) {
+    console.error('Fetch analysis detail error:', err);
     res.status(500).json({ error: err.message });
   }
 });

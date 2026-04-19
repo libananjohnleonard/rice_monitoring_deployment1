@@ -21,6 +21,16 @@ export function HomePage() {
     useState<AnalysisHistoryItem | null>(null);
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
 
+  const fetchAnalysisDetail = async (batchId: string) => {
+    const response = await fetch(`${API_BASE_URL}/api/analyses/${batchId}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch analysis details');
+    }
+
+    const item: AnalysisHistoryItem = await response.json();
+    return mergeOriginalPreviews(item, currentAnalysis?.id === item.id ? currentAnalysis : null);
+  };
+
   const fetchHistory = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/analyses`);
@@ -41,7 +51,8 @@ export function HomePage() {
       setHistory(mergedData);
 
       if (mergedData.length > 0 && !currentAnalysis) {
-        setCurrentAnalysis(mergedData[0]);
+        const detailedFirstItem = await fetchAnalysisDetail(mergedData[0].id);
+        setCurrentAnalysis(detailedFirstItem);
       }
 
       return mergedData;
@@ -113,7 +124,12 @@ export function HomePage() {
     const savedItem = refreshed.find((item) => item.id === saved.batch.id);
 
     if (savedItem) {
-      setCurrentAnalysis(savedItem);
+      try {
+        const detailedSavedItem = await fetchAnalysisDetail(savedItem.id);
+        setCurrentAnalysis(detailedSavedItem);
+      } catch {
+        setCurrentAnalysis(savedItem);
+      }
     } else {
       const nextItem: AnalysisHistoryItem = {
         id: saved.batch.id,
@@ -245,7 +261,12 @@ export function HomePage() {
     const updatedItem = refreshed.find((item) => item.id === currentAnalysis.id);
 
     if (updatedItem) {
-      setCurrentAnalysis(updatedItem);
+      try {
+        const detailedUpdatedItem = await fetchAnalysisDetail(updatedItem.id);
+        setCurrentAnalysis(detailedUpdatedItem);
+      } catch {
+        setCurrentAnalysis(updatedItem);
+      }
     }
 
     setRefreshKey((prev) => prev + 1);
@@ -362,7 +383,17 @@ export function HomePage() {
         onClear={handleClear}
         onReanalyze={handleReanalyze}
         onUpdateImage={handleUpdateImage}
-        onSelectHistoryItem={setCurrentAnalysis}
+        onSelectHistoryItem={(item) => {
+          void (async () => {
+            try {
+              const detailedItem = await fetchAnalysisDetail(item.id);
+              setCurrentAnalysis(detailedItem);
+            } catch (error) {
+              console.error('Fetch analysis detail error:', error);
+              setCurrentAnalysis(item);
+            }
+          })();
+        }}
       />
     </div>
   );
