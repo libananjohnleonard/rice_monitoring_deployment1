@@ -17,8 +17,34 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:5173',
 ]);
 
-if (process.env.FRONTEND_URL) {
-  allowedOrigins.add(process.env.FRONTEND_URL);
+const normalizeOrigin = (value) => value?.trim().replace(/\/$/, '');
+
+const frontendUrlValues = [
+  process.env.FRONTEND_URL,
+  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+  ...(process.env.ALLOWED_ORIGINS?.split(',') ?? []),
+]
+  .map(normalizeOrigin)
+  .filter(Boolean);
+
+for (const origin of frontendUrlValues) {
+  allowedOrigins.add(origin);
+}
+
+function isAllowedOrigin(origin) {
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (!normalizedOrigin) {
+    return true;
+  }
+
+  if (allowedOrigins.has(normalizedOrigin)) {
+    return true;
+  }
+
+  return /^https:\/\/rice-monitoring-deployment1(?:-.*)?\.vercel\.app$/i.test(
+    normalizedOrigin
+  );
 }
 
 app.use(
@@ -30,7 +56,7 @@ app.use(
         return;
       }
 
-      if (allowedOrigins.has(origin)) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
         return;
       }
