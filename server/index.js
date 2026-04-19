@@ -10,7 +10,35 @@ const pool = new Pool({
 });
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = new Set([
+  'https://rice-monitoring-deployment1.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.add(process.env.FRONTEND_URL);
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow non-browser requests such as health checks or server-to-server calls.
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+  })
+);
 app.use(express.json({ limit: '100mb' }));
 
 async function ensureOriginalImageColumn() {
