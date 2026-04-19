@@ -8,7 +8,10 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import type { AnalysisHistoryItem } from '../components/AnalysisResults';
+import {
+  resolveHarvestStatus,
+  type AnalysisHistoryItem,
+} from '../components/AnalysisResults';
 import { API_BASE_URL } from '../lib/config';
 import { fetchJson } from '../lib/http';
 
@@ -509,7 +512,7 @@ export function ManageUploadsPage() {
                               Harvest
                             </p>
                             <p className="mt-1 font-semibold">
-                              {item.result.harvestStatus ?? 'Not Ready'}
+                              {resolveHarvestStatus(item.result)}
                             </p>
                           </div>
                         </div>

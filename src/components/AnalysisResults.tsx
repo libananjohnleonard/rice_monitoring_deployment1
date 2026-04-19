@@ -161,6 +161,24 @@ function harvestStatusLabel(
   return harvestReady ? 'Ready to Harvest' : 'Not Ready';
 }
 
+export function resolveHarvestStatus(
+  result: Pick<
+    AnalysisResultDetails,
+    'harvestStatus' | 'harvestReady' | 'yellow' | 'green' | 'healthScore'
+  >
+) {
+  if (result.harvestStatus) return result.harvestStatus;
+  if (result.harvestReady) {
+    return 'Ready to Harvest';
+  }
+
+  return deriveHarvestStatus(
+    result.yellow ?? 0,
+    result.green ?? 0,
+    result.healthScore ?? 0
+  );
+}
+
 function deriveHarvestStatus(
   yellowPercentage: number,
   greenPercentage: number,
@@ -907,13 +925,13 @@ function Workspace({
   const savedSummary = {
     status: activeResult?.status ?? data.result.status,
     harvestReady: activeResult?.harvestReady ?? data.result.harvestReady ?? false,
-    harvestStatus: (
-      activeResult?.harvestStatus ??
-      data.result.harvestStatus ??
-      ((activeResult?.harvestReady ?? data.result.harvestReady)
-        ? 'Ready to Harvest'
-        : 'Not Ready')
-    ),
+    harvestStatus: resolveHarvestStatus({
+      harvestStatus: activeResult?.harvestStatus ?? data.result.harvestStatus,
+      harvestReady: activeResult?.harvestReady ?? data.result.harvestReady,
+      yellow: activeResult?.yellow ?? data.result.yellow,
+      green: activeResult?.green ?? data.result.green,
+      healthScore: activeResult?.healthScore ?? data.result.healthScore,
+    }),
     healthScore: activeResult?.healthScore ?? data.result.healthScore,
     green: activeResult?.green ?? data.result.green,
     yellow: activeResult?.yellow ?? data.result.yellow,
@@ -1024,14 +1042,6 @@ function Workspace({
               {isReanalyzing ? 'Re-analyzing...' : 'Re-analyze'}
             </button>
           )}
-
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
-              savedSummary.status
-            )}`}
-          >
-            Overall Health: {savedSummary.status}
-          </span>
         </div>
       </div>
 
@@ -1061,8 +1071,13 @@ function Workspace({
           </p>
         </div>
         <div className="rounded-xl bg-amber-50 p-2.5">
-          <p className="text-xs text-amber-700">Overall Health</p>
-          <p className="mt-1 text-xl font-bold text-amber-800">Moderate</p>
+          <p className="text-xs text-amber-700">Harvest Status</p>
+          <p className="mt-1 text-base font-bold text-amber-800">
+            {harvestStatusLabel(
+              savedSummary.harvestStatus,
+              savedSummary.harvestReady
+            )}
+          </p>
         </div>
       </div>
 
@@ -1424,6 +1439,7 @@ function History({
         <div className={historyView === 'card' ? 'grid gap-3 md:grid-cols-2' : 'space-y-3'}>
           {displayed.map((item) => {
             const isSelected = selectedHistoryId === item.id;
+            const itemHarvestStatus = resolveHarvestStatus(item.result);
 
             if (historyView === 'card') {
               return (
@@ -1462,10 +1478,7 @@ function History({
                   </div>
 
                     <p className="text-[11px] font-medium text-amber-700">
-                      Harvest Status: {harvestStatusLabel(
-                        item.result.harvestStatus,
-                        item.result.harvestReady
-                      )}
+                      Harvest Status: {itemHarvestStatus}
                     </p>
 
                     <div className="flex items-center gap-1 text-[11px] text-emerald-700">
@@ -1543,10 +1556,7 @@ function History({
                       </div>
 
                     <p className="text-[11px] font-medium text-amber-700">
-                      Harvest Status: {harvestStatusLabel(
-                        item.result.harvestStatus,
-                        item.result.harvestReady
-                      )}
+                      Harvest Status: {itemHarvestStatus}
                     </p>
 
                     <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-700">
