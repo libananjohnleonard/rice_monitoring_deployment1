@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 import type { AnalysisHistoryItem } from '../components/AnalysisResults';
 import { API_BASE_URL } from '../lib/config';
+import { fetchJson } from '../lib/http';
+
+const ANALYSIS_LIST_LIMIT = 100;
 const ITEMS_PER_PAGE = 8;
 
 type SortOption = 'newest' | 'oldest' | 'category' | 'source';
@@ -75,12 +78,12 @@ export function ManageUploadsPage() {
       setIsLoading(true);
       setError('');
 
-      const response = await fetch(`${API_BASE_URL}/api/analyses`);
-      if (!response.ok) {
-        throw new Error('Failed to load uploads.');
-      }
-
-      const data: AnalysisHistoryItem[] = await response.json();
+      const data = await fetchJson<AnalysisHistoryItem[]>(
+        `${API_BASE_URL}/api/analyses?limit=${ANALYSIS_LIST_LIMIT}`,
+        {
+          cache: 'no-store',
+        }
+      );
       setItems(data);
     } catch (loadError) {
       setError(

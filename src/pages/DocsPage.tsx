@@ -17,6 +17,7 @@ import type {
   SectionResult,
 } from '../components/AnalysisResults';
 import { API_BASE_URL } from '../lib/config';
+import { fetchJson } from '../lib/http';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -28,12 +29,12 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 async function fetchDetailedAnalyses(limit = 500): Promise<AnalysisHistoryItem[]> {
-  const response = await fetch(`${API_BASE_URL}/api/analyses?limit=${limit}&detailed=true`);
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to fetch analyses');
-  }
-  return response.json();
+  return fetchJson<AnalysisHistoryItem[]>(
+    `${API_BASE_URL}/api/analyses?limit=${limit}&detailed=true`,
+    {
+      cache: 'no-store',
+    }
+  );
 }
 
 function harvestLabel(result: AnalysisHistoryItem['result']) {

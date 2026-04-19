@@ -8,6 +8,9 @@ import {
   summarizeWholeFieldImageResults,
 } from '../lib/fieldAnalysis';
 import { API_BASE_URL } from '../lib/config';
+import { fetchJson } from '../lib/http';
+
+const HISTORY_FETCH_LIMIT = 20;
 
 function currentStatusLabel(result?: AnalysisHistoryItem['result'] | null) {
   if (!result) return 'Waiting';
@@ -22,23 +25,24 @@ export function HomePage() {
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
 
   const fetchAnalysisDetail = async (batchId: string) => {
-    const response = await fetch(`${API_BASE_URL}/api/analyses/${batchId}`);
-    if (!response.ok) {
-      throw new Error('Failed to fetch analysis details');
-    }
+    const item = await fetchJson<AnalysisHistoryItem>(
+      `${API_BASE_URL}/api/analyses/${batchId}`,
+      {
+        cache: 'no-store',
+      }
+    );
 
-    const item: AnalysisHistoryItem = await response.json();
     return mergeOriginalPreviews(item, currentAnalysis?.id === item.id ? currentAnalysis : null);
   };
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/analyses`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch analysis history');
-      }
-
-      const data: AnalysisHistoryItem[] = await response.json();
+      const data = await fetchJson<AnalysisHistoryItem[]>(
+        `${API_BASE_URL}/api/analyses?limit=${HISTORY_FETCH_LIMIT}`,
+        {
+          cache: 'no-store',
+        }
+      );
       const mergedData = data.map((item) =>
         mergeOriginalPreviews(
           item,
@@ -70,18 +74,11 @@ export function HomePage() {
     payload: AnalysisInput,
     result: AnalysisHistoryItem['result']
   ) => {
-    const response = await fetch(`${API_BASE_URL}/api/analysis/save`, {
+    return fetchJson(`${API_BASE_URL}/api/analysis/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, result }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      throw new Error(errorData?.error || 'Failed to save analysis');
-    }
-
-    return response.json();
   };
 
   const replaceImageAtIndex = (
@@ -243,7 +240,7 @@ export function HomePage() {
       }
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/analysis/reanalyze`, {
+    await fetchJson(`${API_BASE_URL}/api/analysis/reanalyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -251,11 +248,6 @@ export function HomePage() {
         result: nextResult,
       }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      throw new Error(errorData?.error || 'Failed to save re-analysis');
-    }
 
     const refreshed = await fetchHistory();
     const updatedItem = refreshed.find((item) => item.id === currentAnalysis.id);
@@ -288,7 +280,7 @@ export function HomePage() {
     }
 
     if (currentImage.id) {
-      const response = await fetch(`${API_BASE_URL}/api/images/${currentImage.id}`, {
+      await fetchJson(`${API_BASE_URL}/api/images/${currentImage.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -296,11 +288,6 @@ export function HomePage() {
           capturedAt: image.capturedAt,
         }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || 'Failed to update image');
-      }
     }
 
     const nextCurrentAnalysis = replaceImageAtIndex(currentAnalysis, imageIndex, {
