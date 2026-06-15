@@ -6,14 +6,24 @@ import {
   type AnalysisHistoryItem,
 } from '../components/AnalysisResults';
 import {
+  applyTimelineContext,
   analyzeBatchInBrowser,
   summarizeSectionsForReanalysis,
   summarizeWholeFieldImageResults,
 } from '../lib/fieldAnalysis';
+import { getFieldProfiles } from '../lib/fieldProfiles';
 import { API_BASE_URL } from '../lib/config';
 import { fetchJson } from '../lib/http';
+import essuLogo from '../image/Eastern_Samar_State_University_logo.png';
 
 const HISTORY_FETCH_LIMIT = 20;
+
+type SaveAnalysisResponse = {
+  batch: {
+    id: string;
+    created_at: string;
+  };
+};
 
 function currentStatusLabel(result?: AnalysisHistoryItem['result'] | null) {
   if (!result) return 'Waiting';
@@ -77,7 +87,7 @@ export function HomePage() {
     payload: AnalysisInput,
     result: AnalysisHistoryItem['result']
   ) => {
-    return fetchJson(`${API_BASE_URL}/api/analysis/save`, {
+    return fetchJson<SaveAnalysisResponse>(`${API_BASE_URL}/api/analysis/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, result }),
@@ -95,26 +105,51 @@ export function HomePage() {
     ),
   });
 
+  const applyLatestProfileTimeline = (
+    item: AnalysisHistoryItem
+  ): AnalysisHistoryItem => {
+    const profiles = getFieldProfiles();
+    const latestProfile =
+      profiles.find((profile) => profile.id === item.profileId) ??
+      profiles.find((profile) => profile.profileName === item.profileName);
+
+    if (!latestProfile) return item;
+
+    return {
+      ...item,
+      profileId: latestProfile.id,
+      profileName: latestProfile.profileName,
+      plantedDate: latestProfile.plantedDate,
+      plantedTime: latestProfile.plantedTime,
+      riceVariety: latestProfile.riceVariety,
+      maturityDays: latestProfile.maturityDays,
+    };
+  };
+
   const mergeOriginalPreviews = (
     incoming: AnalysisHistoryItem,
     existing?: AnalysisHistoryItem | null
-  ): AnalysisHistoryItem => ({
-    ...incoming,
-    images: incoming.images.map((image, index) => {
-      const existingImage = existing?.images[index];
+  ): AnalysisHistoryItem => {
+    const mergedItem = {
+      ...incoming,
+      images: incoming.images.map((image, index) => {
+        const existingImage = existing?.images[index];
 
-      return {
-        ...image,
-        originalPreview:
-          image.originalPreview ??
-          existingImage?.originalPreview ??
-          existingImage?.imageData ??
-          existingImage?.preview ??
-          image.imageData ??
-          image.preview,
-      };
-    }),
-  });
+        return {
+          ...image,
+          originalPreview:
+            image.originalPreview ||
+            existingImage?.originalPreview ||
+            existingImage?.imageData ||
+            existingImage?.preview ||
+            image.imageData ||
+            image.preview,
+        };
+      }),
+    };
+
+    return applyLatestProfileTimeline(mergedItem);
+  };
 
   const handleAnalyze = async (payload: AnalysisInput) => {
     const result = await analyzeBatchInBrowser(payload);
@@ -138,6 +173,12 @@ export function HomePage() {
         flightHeightM: payload.flightHeightM,
         sourceType: payload.sourceType,
         notes: payload.notes,
+        profileId: payload.profileId,
+        profileName: payload.profileName,
+        plantedDate: payload.plantedDate,
+        plantedTime: payload.plantedTime,
+        riceVariety: payload.riceVariety,
+        maturityDays: payload.maturityDays,
         images: payload.images,
         result,
       };
@@ -157,24 +198,31 @@ export function HomePage() {
   }) => {
     if (!currentAnalysis) return;
 
+    const analysisForTimeline = applyLatestProfileTimeline(currentAnalysis);
     let nextResult: AnalysisHistoryItem['result'];
 
     if (
-      currentAnalysis.category === 'whole_field' &&
-      Array.isArray(currentAnalysis.result.imageResults) &&
+      analysisForTimeline.category === 'whole_field' &&
+      Array.isArray(analysisForTimeline.result.imageResults) &&
       typeof imageIndex === 'number'
     ) {
-      const targetImage = currentAnalysis.images[imageIndex];
+      const targetImage = analysisForTimeline.images[imageIndex];
 
       if (!targetImage) {
         throw new Error('Whole-field image not found.');
       }
 
       const singleImageAnalysis = await analyzeBatchInBrowser({
-        category: currentAnalysis.category,
-        flightHeightM: currentAnalysis.flightHeightM,
-        sourceType: currentAnalysis.sourceType,
-        notes: currentAnalysis.notes,
+        category: analysisForTimeline.category,
+        flightHeightM: analysisForTimeline.flightHeightM,
+        sourceType: analysisForTimeline.sourceType,
+        notes: analysisForTimeline.notes,
+        profileId: analysisForTimeline.profileId,
+        profileName: analysisForTimeline.profileName,
+        plantedDate: analysisForTimeline.plantedDate,
+        plantedTime: analysisForTimeline.plantedTime,
+        riceVariety: analysisForTimeline.riceVariety,
+        maturityDays: analysisForTimeline.maturityDays,
         images: [targetImage],
       });
 
@@ -184,7 +232,7 @@ export function HomePage() {
         throw new Error('Edited image analysis could not be generated.');
       }
 
-      const nextImageResults = currentAnalysis.result.imageResults.map((item) => ({
+      const nextImageResults = analysisForTimeline.result.imageResults.map((item) => ({
         ...item,
       }));
       const includedSections = (baseImageResult.sections ?? []).filter(
@@ -196,7 +244,7 @@ export function HomePage() {
           ? {
               ...baseImageResult,
               ...summarizeSectionsForReanalysis(
-                { category: currentAnalysis.category },
+                { category: analysisForTimeline.category },
                 includedSections,
                 {
                   gridRows: baseImageResult.gridRows,
@@ -207,19 +255,28 @@ export function HomePage() {
             }
           : baseImageResult;
 
-      nextResult = summarizeWholeFieldImageResults(nextImageResults);
+      nextResult = applyTimelineContext(
+        analysisForTimeline,
+        summarizeWholeFieldImageResults(nextImageResults)
+      );
     } else {
-      const targetImage = currentAnalysis.images[0];
+      const targetImage = analysisForTimeline.images[0];
 
       if (!targetImage) {
         throw new Error('Analysis image not found.');
       }
 
       const refreshedAnalysis = await analyzeBatchInBrowser({
-        category: currentAnalysis.category,
-        flightHeightM: currentAnalysis.flightHeightM,
-        sourceType: currentAnalysis.sourceType,
-        notes: currentAnalysis.notes,
+        category: analysisForTimeline.category,
+        flightHeightM: analysisForTimeline.flightHeightM,
+        sourceType: analysisForTimeline.sourceType,
+        notes: analysisForTimeline.notes,
+        profileId: analysisForTimeline.profileId,
+        profileName: analysisForTimeline.profileName,
+        plantedDate: analysisForTimeline.plantedDate,
+        plantedTime: analysisForTimeline.plantedTime,
+        riceVariety: analysisForTimeline.riceVariety,
+        maturityDays: analysisForTimeline.maturityDays,
         images: [targetImage],
       });
 
@@ -229,15 +286,15 @@ export function HomePage() {
           (section) => !excludedSectionLabels.includes(section.sectionLabel)
         );
 
-        nextResult = summarizeSectionsForReanalysis(
-          { category: currentAnalysis.category },
+        nextResult = applyTimelineContext(analysisForTimeline, summarizeSectionsForReanalysis(
+          { category: analysisForTimeline.category },
           includedSections,
           {
             gridRows: refreshedAnalysis.gridRows,
             gridCols: refreshedAnalysis.gridCols,
             excludedCount: excludedSectionLabels.length,
           }
-        );
+        ));
       } else {
         nextResult = refreshedAnalysis;
       }
@@ -247,13 +304,19 @@ export function HomePage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        batchId: currentAnalysis.id,
+        batchId: analysisForTimeline.id,
+        profileId: analysisForTimeline.profileId,
+        profileName: analysisForTimeline.profileName,
+        plantedDate: analysisForTimeline.plantedDate,
+        plantedTime: analysisForTimeline.plantedTime,
+        riceVariety: analysisForTimeline.riceVariety,
+        maturityDays: analysisForTimeline.maturityDays,
         result: nextResult,
       }),
     });
 
     const refreshed = await fetchHistory();
-    const updatedItem = refreshed.find((item) => item.id === currentAnalysis.id);
+    const updatedItem = refreshed.find((item) => item.id === analysisForTimeline.id);
 
     if (updatedItem) {
       try {
@@ -385,6 +448,44 @@ export function HomePage() {
           })();
         }}
       />
+
+      <footer className="rounded-2xl border border-emerald-900/20 bg-emerald-950 px-4 py-5 text-emerald-50 shadow-lg shadow-emerald-950/15">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-center">
+          <div className="flex items-start gap-3">
+            <img
+              src={essuLogo}
+              alt="Eastern Samar State University logo"
+              className="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-1"
+            />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                Undergraduate Research Study
+              </p>
+              <p className="mt-1 text-sm font-bold uppercase leading-5 text-white">
+                Drone-Assisted Plant Health and Harvest Readiness Monitoring System Using RGB Imagery
+              </p>
+              <p className="mt-2 text-xs leading-5 text-emerald-100">
+                Presented to the Faculty of the College of Engineering, Eastern Samar State
+                University, Borongan City, Eastern Samar, Philippines, in partial fulfillment of
+                the requirement for the degree Bachelor of Science in Computer Engineering.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/15 bg-white/10 px-3 py-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-200">
+              Researchers
+            </p>
+            <p className="mt-2 text-xs leading-5 text-emerald-50">
+              Araba, Val A. &bull; Enage, Joey Algen B. &bull; Libanan, John Leonard A.
+              &bull; Obina, Mike Wendell R. &bull; Sombrero, Cedrick B. &bull; Sorio,
+              Crisaldy D.
+            </p>
+            <p className="mt-3 text-xs font-medium text-emerald-200">
+              &copy; 2026 Rice Plant Health Monitor. All rights reserved.
+            </p>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

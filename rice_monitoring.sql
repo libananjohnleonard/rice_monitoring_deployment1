@@ -33,6 +33,12 @@ CREATE TABLE public.analysis_batches (
     flight_height_m numeric,
     source_type text DEFAULT 'upload'::text NOT NULL,
     notes text,
+    profile_id text,
+    profile_name text,
+    planted_date date,
+    planted_time time without time zone,
+    rice_variety text,
+    maturity_days integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT analysis_batches_category_check CHECK ((category = ANY (ARRAY['whole_field'::text, 'partial_field'::text, 'close_up'::text])))
 );
@@ -294,6 +300,20 @@ CREATE INDEX idx_analysis_batches_category ON public.analysis_batches USING btre
 --
 
 CREATE INDEX idx_analysis_batches_created_at ON public.analysis_batches USING btree (created_at DESC);
+
+
+--
+-- Name: idx_analysis_batches_profile_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_analysis_batches_profile_id ON public.analysis_batches USING btree (profile_id);
+
+
+--
+-- Name: idx_analysis_batches_profile_name; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_analysis_batches_profile_name ON public.analysis_batches USING btree (profile_name);
 
 
 --

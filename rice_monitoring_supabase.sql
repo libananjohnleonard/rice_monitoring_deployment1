@@ -25,6 +25,12 @@ CREATE TABLE public.analysis_batches (
     flight_height_m numeric,
     source_type text DEFAULT 'upload'::text NOT NULL,
     notes text,
+    profile_id text,
+    profile_name text,
+    planted_date date,
+    planted_time time without time zone,
+    rice_variety text,
+    maturity_days integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT analysis_batches_category_check CHECK ((category = ANY (ARRAY['whole_field'::text, 'partial_field'::text, 'close_up'::text])))
 );
@@ -138,6 +144,10 @@ ALTER TABLE ONLY public.supabase_sync_queue
     ADD CONSTRAINT supabase_sync_queue_pkey PRIMARY KEY (id);
 
 CREATE INDEX idx_analysis_batches_created_at ON public.analysis_batches USING btree (created_at DESC);
+
+CREATE INDEX idx_analysis_batches_profile_id ON public.analysis_batches USING btree (profile_id);
+
+CREATE INDEX idx_analysis_batches_profile_name ON public.analysis_batches USING btree (profile_name);
 
 CREATE INDEX idx_analysis_batches_source_type ON public.analysis_batches USING btree (source_type);
 

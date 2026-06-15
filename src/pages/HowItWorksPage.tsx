@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import editImage from '../image/Edit_Image.png';
+import step2Image from '../image/Step-2.png';
 import step3Image from '../image/Step-3.png';
 import step4Image from '../image/Step-4.png';
 import step5Image from '../image/Step-5.png';
-import step6Image from '../image/Step-6-new.png';
+import step6Image from '../image/Step-6.png';
+import step7Image from '../image/Step-7.png';
 
 type StepItem = {
   number: number;
@@ -19,30 +21,38 @@ const steps: StepItem[] = [
   },
   {
     number: 2,
-    text: 'Go to the system homepage.',
+    text: 'Go to "Manage Profile" page and create a profile for the field.',
+    image: step2Image,
+    imageAlt: 'Create field profile on the Manage Profile page',
   },
   {
     number: 3,
-    text: 'Select a category (Whole Fields or Partial Fields).',
+    text: 'Select a profile.',
     image: step3Image,
-    imageAlt: 'Category selection on the homepage',
+    imageAlt: 'Select a field profile on the homepage',
   },
   {
     number: 4,
-    text: 'Upload image/s. You can upload multiple images and they will be treated as a group, but analyzed separately.',
+    text: 'Select a category (Whole Fields or Partial Fields).',
     image: step4Image,
-    imageAlt: 'Image upload step in the system',
+    imageAlt: 'Category selection on the homepage',
   },
   {
     number: 5,
-    text: 'Click Start Analyze and wait for the analysis to complete.',
+    text: 'Upload image/s. You can upload multiple images and they will be treated as a group but analyzed separately.',
     image: step5Image,
-    imageAlt: 'Start analyze action in the system',
+    imageAlt: 'Image upload step in the system',
   },
   {
     number: 6,
-    text: 'Go to the Analysis Workspace to view the results.',
+    text: 'Click Start Analyze and wait for the analysis to complete.',
     image: step6Image,
+    imageAlt: 'Start analyze action in the system',
+  },
+  {
+    number: 7,
+    text: 'Go to the Analysis Workspace to view the results.',
+    image: step7Image,
     imageAlt: 'Analysis Workspace results view',
   },
 ];
@@ -99,7 +109,7 @@ const harvestStatuses = [
 
 export function HowItWorksPage() {
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
+    <div className="space-y-8">
       <div className="overflow-hidden rounded-3xl border border-emerald-200 bg-transparent shadow-sm">
         <div className="border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-yellow-50 px-6 py-6">
           <h1 className="text-3xl font-bold text-emerald-900">

@@ -1,7 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Pencil, Play, Upload, X } from 'lucide-react';
 import { ImageEditorModal } from './ImageEditorModal';
 import { extractExifGpsData } from '../lib/exifGps';
+import {
+  getFieldProfiles,
+  type FieldProfile,
+} from '../lib/fieldProfiles';
 
 export type UploadCategory = 'whole_field' | 'partial_field' | 'close_up';
 export type UploadSourceType = 'upload' | 'wifi' | 'bluetooth' | 'webcam';
@@ -25,6 +29,12 @@ export type AnalysisInput = {
   flightHeightM?: number;
   sourceType: UploadSourceType;
   notes?: string;
+  profileId?: string;
+  profileName?: string;
+  plantedDate?: string;
+  plantedTime?: string;
+  riceVariety?: string;
+  maturityDays?: number;
   images: UploadImageItem[];
 };
 
@@ -52,6 +62,8 @@ const CATEGORY_OPTIONS: {
 export function CameraCapture({ onAnalyze }: Props) {
   const [category, setCategory] = useState<UploadCategory | ''>('');
   const [images, setImages] = useState<UploadImageItem[]>([]);
+  const [profiles, setProfiles] = useState<FieldProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
   const [error, setError] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -70,6 +82,15 @@ export function CameraCapture({ onAnalyze }: Props) {
       'Not selected'
     );
   }, [category]);
+
+  const selectedProfile = useMemo(
+    () => profiles.find((profile) => profile.id === selectedProfileId),
+    [profiles, selectedProfileId]
+  );
+
+  useEffect(() => {
+    setProfiles(getFieldProfiles());
+  }, []);
 
   const revokePreview = (preview: string) => {
     if (preview.startsWith('blob:')) {
@@ -139,6 +160,11 @@ export function CameraCapture({ onAnalyze }: Props) {
       return;
     }
 
+    if (!selectedProfile) {
+      setError('Select a field profile first. You can create one in Manage Profile.');
+      return;
+    }
+
     try {
       setError('');
       setIsAnalyzing(true);
@@ -148,6 +174,12 @@ export function CameraCapture({ onAnalyze }: Props) {
         flightHeightM: undefined,
         sourceType: 'upload',
         notes: '',
+        profileId: selectedProfile.id,
+        profileName: selectedProfile.profileName,
+        plantedDate: selectedProfile.plantedDate,
+        plantedTime: selectedProfile.plantedTime,
+        riceVariety: selectedProfile.riceVariety,
+        maturityDays: selectedProfile.maturityDays,
         images,
       });
     } catch (err) {
@@ -182,6 +214,62 @@ export function CameraCapture({ onAnalyze }: Props) {
         <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
           {images.length} files
         </span>
+      </div>
+
+      <div className="rounded-2xl border border-emerald-200 bg-white p-3">
+        <div className="mb-2">
+          <p className="text-sm font-semibold text-emerald-900">
+            Field profile
+          </p>
+          <p className="text-xs text-emerald-600">
+            Select the saved profile that matches this image batch
+          </p>
+        </div>
+
+        <div className="grid gap-2.5">
+          <label>
+            <span className="mb-1 block text-sm font-medium text-emerald-900">
+              Profile
+            </span>
+            <select
+              value={selectedProfileId}
+              onChange={(event) => setSelectedProfileId(event.currentTarget.value)}
+              className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+            >
+              <option value="">
+                {profiles.length === 0 ? 'No profiles available' : 'Select profile'}
+              </option>
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.profileName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {selectedProfile ? (
+            <div className="grid gap-2 text-sm text-emerald-800 sm:grid-cols-3">
+              <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                <p className="text-xs text-emerald-600">Variety</p>
+                <p className="mt-1 font-semibold">{selectedProfile.riceVariety}</p>
+              </div>
+              <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                <p className="text-xs text-emerald-600">Date planted</p>
+                <p className="mt-1 font-semibold">{selectedProfile.plantedDate}</p>
+              </div>
+              <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                <p className="text-xs text-emerald-600">Maturity</p>
+                <p className="mt-1 font-semibold">
+                  {selectedProfile.maturityDays} days
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              Create a field profile from Manage Profile before analyzing a batch.
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-2.5 sm:grid-cols-1">

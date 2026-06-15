@@ -6,6 +6,11 @@ import type {
   WholeFieldImageResult,
 } from '../components/AnalysisResults';
 import { EXCLUSION_MASK_COLOR } from './imageEditing';
+import {
+  calculateCropAgeDays,
+  getMaturityWindow,
+  resolveMaturityDays,
+} from './riceMaturity';
 
 type RGB = { r: number; g: number; b: number };
 type HSV = { h: number; s: number; v: number };
@@ -174,6 +179,156 @@ function buildInterpretation(category: AnalysisInput['category'], excludedCount 
   }
 
   return `Close-up plant image analyzed using image color segmentation.${suffix}`;
+}
+
+function formatPercent(value?: number) {
+  return `${(value ?? 0).toFixed(1)}%`;
+}
+
+function analysisSnapshotText(
+  result: Pick<
+    AnalysisResultDetails,
+    'status' | 'green' | 'yellow' | 'brown' | 'harvestReady' | 'harvestStatus'
+  >
+) {
+  const harvestStatus =
+    result.harvestStatus ?? (result.harvestReady ? 'Ready to Harvest' : 'Not Ready');
+
+  return `Health Status is ${result.status}; green is ${formatPercent(
+    result.green
+  )}, yellow is ${formatPercent(result.yellow)}, brown is ${formatPercent(
+    result.brown
+  )}, and Harvest Status is ${harvestStatus}.`;
+}
+
+export function applyTimelineContext(
+  input: Pick<AnalysisInput, 'plantedDate' | 'plantedTime' | 'riceVariety' | 'maturityDays' | 'images'>,
+  result: AnalysisHistoryItem['result']
+): AnalysisHistoryItem['result'] {
+  const referenceDate = input.images.find((image) => image.capturedAt)?.capturedAt;
+  const cropAgeDays = calculateCropAgeDays(
+    input.plantedDate,
+    input.plantedTime,
+    referenceDate ?? new Date()
+  );
+  const maturityDays = resolveMaturityDays(input.riceVariety, input.maturityDays);
+  const maturityWindow = getMaturityWindow(maturityDays);
+
+  if (cropAgeDays === undefined || !maturityDays || !maturityWindow) {
+    return result;
+  }
+
+  const varietyText = input.riceVariety ? `${input.riceVariety} ` : '';
+  const timelineText = `${varietyText}crop is ${cropAgeDays} day${
+    cropAgeDays === 1 ? '' : 's'
+  } after planting; expected maturity is day ${maturityDays}.`;
+  const daysToFullMaturity = Math.max(0, maturityDays - cropAgeDays);
+  const remainingText = `${daysToFullMaturity} day${daysToFullMaturity === 1 ? '' : 's'}`;
+  const harvestRangeText = `day ${maturityWindow.start} to day ${maturityDays}`;
+  const discolorationDetected =
+    (result.yellow ?? 0) >= 15 ||
+    (result.brown ?? 0) >= 8 ||
+    result.harvestStatus === 'Nearly Ready' ||
+    result.harvestStatus === 'Ready to Harvest' ||
+    result.harvestStatus === 'Needs Attention or Overripe';
+
+  if (cropAgeDays < maturityWindow.start && discolorationDetected) {
+    const adjustedResult = {
+      ...result,
+      status: result.status === 'Poor' ? 'Poor' : 'Moderate',
+      harvestReady: false,
+      harvestStatus: 'Needs Attention or Overripe' as const,
+    };
+    const findings =
+      `Findings: ${analysisSnapshotText(adjustedResult)} The crop is showing stress or abnormal maturity-like signs. These findings are not aligned with the expected maturity range (${harvestRangeText}) because the crop is only day ${cropAgeDays}. Early yellowing, browning, or harvest-like signs need inspection before harvest decisions.`;
+    const prediction =
+      `Recommended Action: too early to harvest now. Wait about ${remainingText} to reach full maturity near day ${maturityDays}. Inspect before harvest because the findings show stress or abnormal maturity-like signs.`;
+    const harvestParameter =
+      `Harvest: inspect crop first; about ${remainingText} remaining to full maturity.`;
+    const warning =
+      `${timelineText} ${findings} ${prediction} ${harvestParameter}`;
+
+    return {
+      ...adjustedResult,
+      recommendations: [
+        result.recommendations,
+        'Timeline warning: image signs appeared before the expected maturity period. Inspect for water stress, nutrient deficiency, pests, or disease.',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      interpretation: `${result.interpretation} ${warning}`,
+      maturityAssessment: {
+        cropAgeDays,
+        maturityDays,
+        maturityWindowStart: maturityWindow.start,
+        maturityWindowEnd: maturityWindow.end,
+        stage: 'Early discoloration warning',
+        findings,
+        prediction,
+        harvestParameter,
+        message: warning,
+      },
+    };
+  }
+
+  const inMaturityWindow =
+    cropAgeDays >= maturityWindow.start && cropAgeDays <= maturityWindow.end;
+  const pastMaturityWindow = cropAgeDays > maturityWindow.end;
+  const needsAttention = result.harvestStatus === 'Needs Attention or Overripe';
+  const findings = inMaturityWindow
+    ? needsAttention
+      ? `Findings: ${analysisSnapshotText(result)} The crop is showing stress or abnormal maturity-like signs. The crop age is within the expected maturity range (${harvestRangeText}), but the health and color readings show warning signs. Inspect the plants before harvest.`
+      : `Findings: ${analysisSnapshotText(result)} The data is aligned with the expected maturity range (${harvestRangeText}); yellowing can be normal near maturity when health remains acceptable.`
+    : pastMaturityWindow
+      ? `Findings: ${analysisSnapshotText(result)} The crop is past the expected maturity range (${harvestRangeText}), so yellowing, browning, or declining health may indicate overripe plants or field stress.`
+      : `Findings: ${analysisSnapshotText(result)} The crop is before the expected maturity range (${harvestRangeText}); if yellowing, browning, or harvest-ready signs appear this early, the crop may be showing stress or abnormal maturity-like signs. About ${remainingText} remain to full maturity.`;
+  const message = inMaturityWindow
+    ? needsAttention
+      ? `${timelineText} Crop is in the maturity period, but the image needs attention.`
+      : `${timelineText} Yellowing is normal at this stage.`
+    : pastMaturityWindow
+      ? `${timelineText} Crop is past the expected maturity window; monitor for overripe or declining plants.`
+      : `${timelineText} Crop is still before the expected maturity window.`;
+  const prediction = inMaturityWindow
+    ? needsAttention
+      ? daysToFullMaturity > 0
+        ? `Recommended Action: crop is within the expected harvest range and about ${remainingText} from full maturity near day ${maturityDays}, but do not harvest based on timeline alone. Inspect first because the findings show stress or overripe-like signs.`
+        : `Recommended Action: crop is at full maturity within the ${harvestRangeText} range. Inspect before harvest because the findings show stress or abnormal maturity-like signs.`
+      : daysToFullMaturity > 0
+        ? `Recommended Action: harvest can be planned within the ${harvestRangeText} range. For full maturity, harvest near day ${maturityDays}; about ${remainingText} remain.`
+        : `Recommended Action: crop can be considered ready if field inspection confirms good condition.`
+    : pastMaturityWindow
+      ? `Recommended Action: crop is past full maturity by ${cropAgeDays - maturityDays} day${cropAgeDays - maturityDays === 1 ? '' : 's'}. Inspect for overripe or declining plants before harvest.`
+      : `Recommended Action: not ready yet. Wait about ${remainingText} to reach full maturity near day ${maturityDays}.`;
+  const harvestParameter = inMaturityWindow
+    ? needsAttention
+      ? 'Harvest: inspect crop condition before harvest.'
+      : daysToFullMaturity > 0
+      ? `Harvest: within the expected harvest range, but about ${remainingText} remain to full maturity.`
+      : 'Harvest: ready now.'
+    : pastMaturityWindow
+      ? `Harvest: overdue by ${cropAgeDays - maturityDays} day${cropAgeDays - maturityDays === 1 ? '' : 's'}.`
+      : `Harvest: about ${remainingText} remaining to full maturity.`;
+
+  return {
+    ...result,
+    interpretation: `${result.interpretation} ${message} ${findings} ${prediction} ${harvestParameter}`,
+    maturityAssessment: {
+      cropAgeDays,
+      maturityDays,
+      maturityWindowStart: maturityWindow.start,
+      maturityWindowEnd: maturityWindow.end,
+      stage: inMaturityWindow
+        ? 'Maturity window'
+        : pastMaturityWindow
+          ? 'Past maturity window'
+          : 'Vegetative window',
+      findings,
+      prediction,
+      harvestParameter,
+      message: `${message} ${findings} ${prediction} ${harvestParameter}`,
+    },
+  };
 }
 
 function sectionLabel(row: number, col: number) {
@@ -570,13 +725,15 @@ export async function analyzeBatchInBrowser(
       })
     );
 
-    return summarizeWholeFieldImageResults(imageResults);
+    return applyTimelineContext(input, summarizeWholeFieldImageResults(imageResults));
   }
 
-  return analyzeSingleImage(
+  const result = await analyzeSingleImage(
     input.category,
     input.images[0]?.imageData || input.images[0]?.preview || ''
   );
+
+  return applyTimelineContext(input, result);
 }
 
 export function summarizeSectionsForReanalysis(

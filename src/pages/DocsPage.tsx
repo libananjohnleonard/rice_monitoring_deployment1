@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileDown, FileText, Loader2 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
@@ -18,6 +18,7 @@ import type {
 } from '../components/AnalysisResults';
 import { API_BASE_URL } from '../lib/config';
 import { fetchJson } from '../lib/http';
+import { getFieldProfiles, type FieldProfile } from '../lib/fieldProfiles';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -50,24 +51,100 @@ function buildSectionRows(item: AnalysisHistoryItem) {
     section.sectionLabel,
     section.healthStatus,
     String(section.healthScore),
-    `${section.greenPercentage.toFixed(1)}%`,
-    `${section.yellowPercentage.toFixed(1)}%`,
-    `${section.brownPercentage.toFixed(1)}%`,
+    `G ${section.greenPercentage.toFixed(1)}% | Y ${section.yellowPercentage.toFixed(1)}% | B ${section.brownPercentage.toFixed(1)}%`,
     sectionHarvestLabel(section),
     section.isExcluded ? 'Excluded' : 'Included',
   ]);
 }
 
+function stripLabel(value?: string | null) {
+  return (value ?? '')
+    .replace(/^Findings:\s*/i, '')
+    .replace(/^Recommended Action:\s*/i, '')
+    .replace(/^Prediction:\s*/i, '')
+    .trim();
+}
+
+function reportProfileLabel(item: AnalysisHistoryItem) {
+  return item.profileName || 'No profile';
+}
+
+function reportFindings(item: AnalysisHistoryItem) {
+  return (
+    stripLabel(item.result.maturityAssessment?.findings) ||
+    stripLabel(item.result.interpretation) ||
+    'No findings available.'
+  );
+}
+
+function reportAction(item: AnalysisHistoryItem) {
+  return (
+    stripLabel(item.result.maturityAssessment?.prediction) ||
+    stripLabel(item.result.maturityAssessment?.harvestParameter) ||
+    stripLabel(item.result.recommendations) ||
+    'No recommended action available.'
+  );
+}
+
+function formatPercent(value?: number) {
+  return typeof value === 'number' ? `${value.toFixed(1)}%` : 'N/A';
+}
+
+function matchesProfile(
+  item: AnalysisHistoryItem,
+  profileId: string,
+  profile?: FieldProfile
+) {
+  if (profileId === 'all') return true;
+
+  return item.profileId === profileId || item.profileName === profile?.profileName;
+}
+
+function profileReportTitle(profileName: string) {
+  return profileName === 'All profiles'
+    ? 'Rice Plant Health - Analysis Report'
+    : `Rice Plant Health - ${profileName} Report`;
+}
+
+function wordParagraph(text: string, bold = false) {
+  return new Paragraph({
+    children: [new TextRun({ text, bold })],
+  });
+}
+
+function tableCell(text: string, bold = false) {
+  return new TableCell({
+    children: [wordParagraph(text, bold)],
+  });
+}
+
 export function DocsPage() {
   const [loading, setLoading] = useState<'pdf' | 'docx' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState('all');
+  const profiles = useMemo(() => getFieldProfiles(), []);
+  const selectedProfile =
+    profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+  const selectedProfileName =
+    selectedProfileId === 'all'
+      ? 'All profiles'
+      : selectedProfile?.profileName ?? 'Selected profile';
+
+  const loadFilteredData = async () => {
+    const data = await fetchDetailedAnalyses(500);
+    return data.filter((item) => matchesProfile(item, selectedProfileId, selectedProfile ?? undefined));
+  };
 
   const loadAndDownloadPDF = async () => {
     setLoading('pdf');
     setError(null);
 
     try {
-      const data = await fetchDetailedAnalyses(500);
+      const data = await loadFilteredData();
+      if (data.length === 0) {
+        throw new Error(`No analysis records found for ${selectedProfileName}.`);
+      }
+
       const doc = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
@@ -75,39 +152,42 @@ export function DocsPage() {
       });
 
       doc.setFontSize(14);
-      doc.text('Rice Plant Health - Analysis Report', 14, 15);
+      doc.text(profileReportTitle(selectedProfileName), 14, 15);
       doc.setFontSize(10);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
+      doc.text(`Profile: ${selectedProfileName}`, 14, 22);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
 
       autoTable(doc, {
         head: [[
           'Date',
-          'Category',
-          'Source',
+          'Profile',
           'Status',
           'Score',
-          'Green %',
-          'Yellow %',
-          'Brown %',
           'Harvest',
-          'Notes',
+          'RGB Summary',
+          'Recommended Action',
         ]],
         body: data.map((item) => [
           new Date(item.createdAt).toLocaleString(),
-          item.category,
-          item.sourceType,
+          reportProfileLabel(item),
           item.result.status ?? '',
           String(item.result.healthScore ?? ''),
-          String(item.result.green ?? ''),
-          String(item.result.yellow ?? ''),
-          String(item.result.brown ?? ''),
           harvestLabel(item.result),
-          (item.notes ?? '').slice(0, 60) +
-            ((item.notes?.length ?? 0) > 60 ? '...' : ''),
+          `G ${formatPercent(item.result.green)} | Y ${formatPercent(item.result.yellow)} | B ${formatPercent(item.result.brown)}`,
+          reportAction(item),
         ]),
-        startY: 28,
+        startY: 34,
         theme: 'grid',
-        styles: { fontSize: 8 },
+        styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak' },
+        columnStyles: {
+          0: { cellWidth: 32 },
+          1: { cellWidth: 34 },
+          2: { cellWidth: 24 },
+          3: { cellWidth: 15 },
+          4: { cellWidth: 36 },
+          5: { cellWidth: 42 },
+          6: { cellWidth: 95 },
+        },
         headStyles: { fillColor: [34, 197, 94] },
       });
 
@@ -125,33 +205,25 @@ export function DocsPage() {
         }
 
         doc.setFontSize(11);
-        doc.text(
-          `Analysis ${index + 1}: ${new Date(item.createdAt).toLocaleString()} - ${item.category}`,
-          14,
-          cursorY + 8
-        );
+        doc.text(`Analysis ${index + 1}: ${new Date(item.createdAt).toLocaleString()}`, 14, cursorY + 8);
         doc.setFontSize(9);
-        doc.text(
-          `Interpretation: ${item.result.interpretation ?? 'N/A'}`,
-          14,
-          cursorY + 14
-        );
+        const detailText = doc.splitTextToSize(`Findings: ${reportFindings(item)}`, 260);
+        doc.text(detailText, 14, cursorY + 14);
+        cursorY += Math.max(18, detailText.length * 4 + 10);
 
         autoTable(doc, {
           head: [[
             'Section',
             'Health',
             'Score',
-            'Green %',
-            'Yellow %',
-            'Brown %',
+            'RGB',
             'Harvest',
             'State',
           ]],
           body: rows,
-          startY: cursorY + 18,
+          startY: cursorY,
           theme: 'grid',
-          styles: { fontSize: 7.5 },
+          styles: { fontSize: 7.5, overflow: 'linebreak' },
           headStyles: { fillColor: [16, 185, 129] },
         });
 
@@ -161,7 +233,8 @@ export function DocsPage() {
       });
 
       const date = new Date().toISOString().slice(0, 10);
-      doc.save(`rice-analysis-${date}.pdf`);
+      const safeProfile = selectedProfileName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      doc.save(`rice-analysis-${safeProfile}-${date}.pdf`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to generate PDF');
     } finally {
@@ -174,7 +247,11 @@ export function DocsPage() {
     setError(null);
 
     try {
-      const data = await fetchDetailedAnalyses(500);
+      const data = await loadFilteredData();
+      if (data.length === 0) {
+        throw new Error(`No analysis records found for ${selectedProfileName}.`);
+      }
+
       const date = new Date().toISOString().slice(0, 10);
 
       const summaryTable = new Table({
@@ -184,32 +261,24 @@ export function DocsPage() {
             tableHeader: true,
             children: [
               'Date',
-              'Category',
-              'Source',
+              'Profile',
               'Status',
               'Score',
-              'Green %',
-              'Yellow %',
-              'Brown %',
               'Harvest',
-              'Notes',
-            ].map((label) => new TableCell({ children: [new Paragraph(label)] })),
+              'RGB Summary',
+            ].map((label) => tableCell(label, true)),
           }),
           ...data.map(
             (item) =>
               new TableRow({
                 children: [
                   new Date(item.createdAt).toLocaleString(),
-                  item.category,
-                  item.sourceType,
+                  reportProfileLabel(item),
                   item.result.status ?? '',
                   String(item.result.healthScore ?? ''),
-                  String(item.result.green ?? ''),
-                  String(item.result.yellow ?? ''),
-                  String(item.result.brown ?? ''),
                   harvestLabel(item.result),
-                  (item.notes ?? '').slice(0, 200),
-                ].map((value) => new TableCell({ children: [new Paragraph(value)] })),
+                  `G ${formatPercent(item.result.green)} | Y ${formatPercent(item.result.yellow)} | B ${formatPercent(item.result.brown)}`,
+                ].map((value) => tableCell(value)),
               })
           ),
         ],
@@ -223,15 +292,32 @@ export function DocsPage() {
           new Paragraph({
             children: [
               new TextRun({
-                text: `Analysis ${index + 1}: ${new Date(item.createdAt).toLocaleString()} - ${item.category}`,
+                text: `Analysis ${index + 1}: ${new Date(item.createdAt).toLocaleString()}`,
                 bold: true,
+                size: 24,
               }),
             ],
           }),
-          new Paragraph(`Source: ${item.sourceType}`),
-          new Paragraph(`Overall Health: ${item.result.status ?? 'N/A'}`),
-          new Paragraph(`Harvest Status: ${harvestLabel(item.result)}`),
-          new Paragraph(`Interpretation: ${item.result.interpretation ?? 'N/A'}`),
+          new Table({
+            width: { size: 100, type: 'PERCENTAGE' },
+            rows: [
+              ['Profile', reportProfileLabel(item)],
+              ['Category', item.category],
+              ['Source', item.sourceType],
+              ['Overall Health', `${item.result.status ?? 'N/A'} (${item.result.healthScore ?? 'N/A'})`],
+              ['RGB Summary', `Green ${formatPercent(item.result.green)} | Yellow ${formatPercent(item.result.yellow)} | Brown ${formatPercent(item.result.brown)}`],
+              ['Harvest Status', harvestLabel(item.result)],
+            ].map(
+              ([label, value]) =>
+                new TableRow({
+                  children: [tableCell(label, true), tableCell(value)],
+                })
+            ),
+          }),
+          wordParagraph('Findings', true),
+          wordParagraph(reportFindings(item)),
+          wordParagraph('Recommended Action', true),
+          wordParagraph(reportAction(item)),
         ];
 
         if (sectionRows.length > 0) {
@@ -245,18 +331,16 @@ export function DocsPage() {
                     'Section',
                     'Health',
                     'Score',
-                    'Green %',
-                    'Yellow %',
-                    'Brown %',
+                    'RGB',
                     'Harvest',
                     'State',
-                  ].map((label) => new TableCell({ children: [new Paragraph(label)] })),
+                  ].map((label) => tableCell(label, true)),
                 }),
                 ...sectionRows.map(
                   (row) =>
                     new TableRow({
                       children: row.map((value) =>
-                        new TableCell({ children: [new Paragraph(String(value))] })
+                        tableCell(String(value))
                       ),
                     })
                 ),
@@ -275,9 +359,17 @@ export function DocsPage() {
               new Paragraph({
                 children: [
                   new TextRun({
-                    text: 'Rice Plant Health - Analysis Report',
+                    text: profileReportTitle(selectedProfileName),
                     bold: true,
                     size: 28,
+                  }),
+                ],
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `Profile: ${selectedProfileName}`,
+                    size: 22,
                   }),
                 ],
               }),
@@ -298,7 +390,8 @@ export function DocsPage() {
       });
 
       const blob = await Packer.toBlob(doc);
-      downloadBlob(blob, `rice-analysis-${date}.docx`);
+      const safeProfile = selectedProfileName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      downloadBlob(blob, `rice-analysis-${safeProfile}-${date}.docx`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to generate Word document');
     } finally {
@@ -307,14 +400,13 @@ export function DocsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="space-y-8">
       <div className="rounded-2xl border border-emerald-200 bg-white/80 p-6 shadow-sm">
         <h1 className="mb-2 text-2xl font-bold text-emerald-800">Docs</h1>
         <p className="mb-6 text-emerald-700">
-          Download your analysis results as a report. Choose Word (.docx) for
-          editing and sharing, or PDF for printing and archiving. Data includes
-          overall status, category, source, notes, color percentages, harvest
-          status, interpretation, and by-section details when available.
+          Select a profile, then download its analysis report as Word (.docx) or PDF.
+          Reports include overall status, RGB readings, harvest status, findings,
+          recommended action, and section details when available.
         </p>
 
         {error && (
@@ -325,6 +417,29 @@ export function DocsPage() {
             {error}
           </p>
         )}
+
+        <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-emerald-900">
+              Report profile
+            </span>
+            <select
+              value={selectedProfileId}
+              onChange={(event) => setSelectedProfileId(event.currentTarget.value)}
+              className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm text-emerald-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+            >
+              <option value="all">All profiles</option>
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.profileName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="mt-2 text-xs text-emerald-700">
+            The download will include records that match the selected profile.
+          </p>
+        </div>
 
         <div className="flex flex-wrap gap-4">
           <button
@@ -355,7 +470,7 @@ export function DocsPage() {
         </div>
 
         <p className="mt-4 text-xs text-emerald-600">
-          Exports up to 500 most recent analyses.
+          Exports up to 500 most recent analyses for the selected report profile.
         </p>
 
         <div className="mt-8">

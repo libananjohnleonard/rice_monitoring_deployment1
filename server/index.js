@@ -42,6 +42,10 @@ function isAllowedOrigin(origin) {
     return true;
   }
 
+  if (/^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/i.test(normalizedOrigin)) {
+    return true;
+  }
+
   return /^https:\/\/rice-monitoring-deployment1(?:-.*)?\.vercel\.app$/i.test(
     normalizedOrigin
   );
@@ -105,6 +109,18 @@ async function ensureImageOrderColumn() {
   `);
 }
 
+async function ensureCropTimelineColumns() {
+  await pool.query(`
+    ALTER TABLE analysis_batches
+    ADD COLUMN IF NOT EXISTS profile_name text,
+    ADD COLUMN IF NOT EXISTS profile_id text,
+    ADD COLUMN IF NOT EXISTS planted_date date,
+    ADD COLUMN IF NOT EXISTS planted_time time,
+    ADD COLUMN IF NOT EXISTS rice_variety text,
+    ADD COLUMN IF NOT EXISTS maturity_days integer
+  `);
+}
+
 function round1(value) {
   return Math.round(value * 10) / 10;
 }
@@ -140,6 +156,145 @@ function getHarvestStatus(yellowPercentage, greenPercentage, healthScore) {
   }
 
   return 'Not Ready';
+}
+
+function calculateCropAgeDays(plantedDate, plantedTime, referenceDate = new Date()) {
+  if (!plantedDate) return undefined;
+
+  const plantedDateValue =
+    plantedDate instanceof Date
+      ? plantedDate.toISOString().slice(0, 10)
+      : String(plantedDate).slice(0, 10);
+  const plantedClock = plantedTime ? String(plantedTime).slice(0, 5) : '00:00';
+  const plantedAt = new Date(`${plantedDateValue}T${plantedClock}:00`);
+  const referenceDateValue =
+    referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+
+  if (
+    Number.isNaN(plantedAt.getTime()) ||
+    Number.isNaN(referenceDateValue.getTime())
+  ) {
+    return undefined;
+  }
+
+  const diffMs = referenceDateValue.getTime() - plantedAt.getTime();
+
+  if (diffMs < 0) return 0;
+
+  return Math.floor(diffMs / 86400000) + 1;
+}
+
+function getMaturityWindow(maturityDays) {
+  if (!maturityDays) return null;
+
+  return {
+    start: Math.max(1, Number(maturityDays) - 20),
+    end: Number(maturityDays),
+  };
+}
+
+function applyCropTimeline(row, result, referenceDate = new Date()) {
+  const cropAgeDays = calculateCropAgeDays(
+    row.planted_date,
+    row.planted_time,
+    referenceDate
+  );
+  const maturityDays = row.maturity_days ? Number(row.maturity_days) : undefined;
+  const maturityWindow = getMaturityWindow(maturityDays);
+
+  if (cropAgeDays === undefined || !maturityDays || !maturityWindow) {
+    return result;
+  }
+
+  const varietyText = row.rice_variety ? `${row.rice_variety} ` : '';
+  const timelineText = `${varietyText}crop is ${cropAgeDays} day${
+    cropAgeDays === 1 ? '' : 's'
+  } after planting; expected maturity is day ${maturityDays}.`;
+  const daysToFullMaturity = Math.max(0, maturityDays - cropAgeDays);
+  const remainingText = `${daysToFullMaturity} day${daysToFullMaturity === 1 ? '' : 's'}`;
+  const discolorationDetected =
+    (result.yellow ?? 0) >= 15 ||
+    (result.brown ?? 0) >= 8 ||
+    result.harvestStatus === 'Nearly Ready' ||
+    result.harvestStatus === 'Ready to Harvest' ||
+    result.harvestStatus === 'Needs Attention or Overripe';
+
+  if (cropAgeDays < maturityWindow.start && discolorationDetected) {
+    const prediction =
+      'Prediction: harvest status does not match crop timeline; inspect crop.';
+    const harvestParameter =
+      `Harvest: inspect crop first; about ${remainingText} remaining to full maturity.`;
+    const warning =
+      `${timelineText} ${prediction} ${harvestParameter}`;
+
+    return {
+      ...result,
+      status: result.status === 'Poor' ? 'Poor' : 'Moderate',
+      harvestReady: false,
+      harvestStatus: 'Needs Attention or Overripe',
+      interpretation: result.interpretation?.includes(warning)
+        ? result.interpretation
+        : `${result.interpretation ?? ''} ${warning}`.trim(),
+      maturityAssessment: {
+        cropAgeDays,
+        maturityDays,
+        maturityWindowStart: maturityWindow.start,
+        maturityWindowEnd: maturityWindow.end,
+        stage: 'Early discoloration warning',
+        prediction,
+        harvestParameter,
+        message: warning,
+      },
+    };
+  }
+
+  const inMaturityWindow =
+    cropAgeDays >= maturityWindow.start && cropAgeDays <= maturityWindow.end;
+  const pastMaturityWindow = cropAgeDays > maturityWindow.end;
+  const needsAttention = result.harvestStatus === 'Needs Attention or Overripe';
+  const message = inMaturityWindow
+    ? needsAttention
+      ? `${timelineText} Crop is in the maturity period, but the image needs attention.`
+      : `${timelineText} Yellowing is normal at this stage.`
+    : pastMaturityWindow
+      ? `${timelineText} Crop is past the expected maturity window; monitor for overripe or declining plants.`
+      : `${timelineText} Crop is still before the expected maturity window.`;
+  const prediction = inMaturityWindow
+    ? needsAttention
+      ? 'Prediction: maturity day and harvest status are within the expected timeline, but the analysis shows warning signs that need inspection.'
+      : 'Prediction: harvest-ready; yellowing is normal.'
+    : pastMaturityWindow
+      ? 'Prediction: past harvest window.'
+      : 'Prediction: still growing.';
+  const harvestParameter = inMaturityWindow
+    ? needsAttention
+      ? daysToFullMaturity > 0
+        ? `Harvest: expected timeline is near maturity, but inspect crop condition before harvest. About ${remainingText} to full maturity.`
+        : 'Harvest: expected timeline is at maturity, but inspect crop condition before harvest.'
+      : daysToFullMaturity > 0
+      ? `Harvest: ready now; about ${remainingText} to full maturity.`
+      : 'Harvest: ready now.'
+    : pastMaturityWindow
+      ? `Harvest: overdue by ${cropAgeDays - maturityDays} day${cropAgeDays - maturityDays === 1 ? '' : 's'}.`
+      : `Harvest: about ${remainingText} remaining to full maturity.`;
+
+  return {
+    ...result,
+    maturityAssessment: {
+      cropAgeDays,
+      maturityDays,
+      maturityWindowStart: maturityWindow.start,
+      maturityWindowEnd: maturityWindow.end,
+      stage: inMaturityWindow
+        ? 'Maturity window'
+        : pastMaturityWindow
+          ? 'Past maturity window'
+          : 'Vegetative window',
+      prediction,
+      harvestParameter,
+      message: `${message} ${prediction} ${harvestParameter}`,
+    },
+  };
 }
 
 function buildInterpretation(category, excludedCount = 0) {
@@ -357,6 +512,12 @@ app.post('/api/analysis/save', async (req, res) => {
       flightHeightM,
       sourceType,
       notes,
+      profileId,
+      profileName,
+      plantedDate,
+      plantedTime,
+      riceVariety,
+      maturityDays,
       images,
       result,
     } = req.body;
@@ -376,9 +537,15 @@ app.post('/api/analysis/save', async (req, res) => {
         category,
         flight_height_m,
         source_type,
-        notes
+        notes,
+        profile_id,
+        profile_name,
+        planted_date,
+        planted_time,
+        rice_variety,
+        maturity_days
       )
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
       `,
       [
@@ -386,6 +553,12 @@ app.post('/api/analysis/save', async (req, res) => {
         flightHeightM ?? null,
         sourceType ?? 'upload',
         notes ?? null,
+        profileId || null,
+        profileName || null,
+        plantedDate || null,
+        plantedTime || null,
+        riceVariety || null,
+        maturityDays ?? null,
       ]
     );
 
@@ -636,6 +809,12 @@ app.get('/api/analyses', async (req, res) => {
         ab.flight_height_m,
         ab.source_type,
         ab.notes,
+        ab.profile_id,
+        ab.profile_name,
+        ab.planted_date,
+        ab.planted_time,
+        ab.rice_variety,
+        ab.maturity_days,
         ab.created_at AS batch_created_at,
 
         ar.id AS analysis_result_id,
@@ -693,7 +872,13 @@ app.get('/api/analyses', async (req, res) => {
                   ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
                 ) = 1 THEN image_data
                 ELSE NULL
-              END AS preview_image_data
+              END AS preview_image_data,
+              CASE
+                WHEN ROW_NUMBER() OVER (
+                  ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+                ) = 1 THEN original_image_data
+                ELSE NULL
+              END AS original_preview_image_data
             FROM plant_images
             WHERE batch_id = $1
             ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
@@ -711,6 +896,12 @@ app.get('/api/analyses', async (req, res) => {
             : undefined,
           sourceType: row.source_type,
           notes: row.notes,
+          profileId: row.profile_id,
+          profileName: row.profile_name,
+          plantedDate: row.planted_date,
+          plantedTime: row.planted_time,
+          riceVariety: row.rice_variety,
+          maturityDays: row.maturity_days,
           images: imagesRes.rows.map((img) => ({
             id: img.id,
             file: null,
@@ -722,7 +913,8 @@ app.get('/api/analyses', async (req, res) => {
                   : undefined,
             preview: img.preview_image_data ?? '',
             imageData: '',
-            originalPreview: '',
+            originalPreview:
+              img.original_preview_image_data || img.preview_image_data || '',
             capturedAt: img.captured_at,
             sourceType: img.source_type,
             droneModel: img.drone_model,
@@ -730,7 +922,7 @@ app.get('/api/analyses', async (req, res) => {
             longitude: img.longitude ? Number(img.longitude) : undefined,
             altitude: img.altitude ? Number(img.altitude) : undefined,
           })),
-          result: {
+          result: applyCropTimeline(row, {
             status: row.health_status,
             harvestReady: row.harvest_ready,
             harvestStatus: getHarvestStatus(
@@ -754,7 +946,7 @@ app.get('/api/analyses', async (req, res) => {
             analysisVersion: row.analysis_version,
             parentAnalysisResultId: row.parent_analysis_result_id,
             sections: [],
-          },
+          }, imagesRes.rows[0]?.captured_at ?? row.batch_created_at),
         });
         continue;
       }
@@ -778,6 +970,12 @@ app.get('/api/analyses', async (req, res) => {
           : undefined,
         sourceType: row.source_type,
         notes: row.notes,
+        profileId: row.profile_id,
+        profileName: row.profile_name,
+        plantedDate: row.planted_date,
+        plantedTime: row.planted_time,
+        riceVariety: row.rice_variety,
+        maturityDays: row.maturity_days,
         images: imagesRes.rows.map((img) => ({
           id: img.id,
           file: null,
@@ -846,16 +1044,16 @@ app.get('/api/analyses', async (req, res) => {
               .filter(Boolean);
 
             if (imageResults.length > 0) {
-              return {
+              return applyCropTimeline(row, {
                 ...summarizeWholeFieldImageResults(imageResults),
                 recommendations: row.recommendations,
                 analysisVersion: row.analysis_version,
                 parentAnalysisResultId: row.parent_analysis_result_id,
-              };
+              }, imagesRes.rows[0]?.captured_at ?? row.batch_created_at);
             }
           }
 
-          return {
+          return applyCropTimeline(row, {
             status: row.health_status,
             harvestReady: row.harvest_ready,
             harvestStatus: getHarvestStatus(
@@ -879,7 +1077,7 @@ app.get('/api/analyses', async (req, res) => {
             analysisVersion: row.analysis_version,
             parentAnalysisResultId: row.parent_analysis_result_id,
             sections: mappedSections,
-          };
+          }, imagesRes.rows[0]?.captured_at ?? row.batch_created_at);
         })(),
       });
     }
@@ -903,6 +1101,12 @@ app.get('/api/analyses/:batchId', async (req, res) => {
         ab.flight_height_m,
         ab.source_type,
         ab.notes,
+        ab.profile_id,
+        ab.profile_name,
+        ab.planted_date,
+        ab.planted_time,
+        ab.rice_variety,
+        ab.maturity_days,
         ab.created_at AS batch_created_at,
 
         ar.id AS analysis_result_id,
@@ -947,6 +1151,12 @@ app.get('/api/analyses/:batchId', async (req, res) => {
         ab.flight_height_m,
         ab.source_type,
         ab.notes,
+        ab.profile_id,
+        ab.profile_name,
+        ab.planted_date,
+        ab.planted_time,
+        ab.rice_variety,
+        ab.maturity_days,
         ab.created_at AS batch_created_at,
 
         ar.id AS analysis_result_id,
@@ -1052,17 +1262,17 @@ app.get('/api/analyses/:batchId', async (req, res) => {
         .filter(Boolean);
 
       if (imageResults.length > 0) {
-        result = {
+        result = applyCropTimeline(detailRow, {
           ...summarizeWholeFieldImageResults(imageResults),
           recommendations: detailRow.recommendations,
           analysisVersion: detailRow.analysis_version,
           parentAnalysisResultId: detailRow.parent_analysis_result_id,
-        };
+        }, imagesRes.rows[0]?.captured_at ?? detailRow.batch_created_at);
       }
     }
 
     if (!result) {
-      result = {
+      result = applyCropTimeline(detailRow, {
         status: detailRow.health_status,
         harvestReady: detailRow.harvest_ready,
         harvestStatus: getHarvestStatus(
@@ -1086,7 +1296,7 @@ app.get('/api/analyses/:batchId', async (req, res) => {
         analysisVersion: detailRow.analysis_version,
         parentAnalysisResultId: detailRow.parent_analysis_result_id,
         sections: mappedSections,
-      };
+      }, imagesRes.rows[0]?.captured_at ?? detailRow.batch_created_at);
     }
 
     res.json({
@@ -1098,6 +1308,12 @@ app.get('/api/analyses/:batchId', async (req, res) => {
         : undefined,
       sourceType: detailRow.source_type,
       notes: detailRow.notes,
+      profileId: detailRow.profile_id,
+      profileName: detailRow.profile_name,
+      plantedDate: detailRow.planted_date,
+      plantedTime: detailRow.planted_time,
+      riceVariety: detailRow.rice_variety,
+      maturityDays: detailRow.maturity_days,
       images: imagesRes.rows.map((img) => ({
         id: img.id,
         file: null,
@@ -1214,6 +1430,12 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
     const {
       batchId,
       result,
+      profileId,
+      profileName,
+      plantedDate,
+      plantedTime,
+      riceVariety,
+      maturityDays,
     } = req.body;
 
     if (!batchId || !result) {
@@ -1223,6 +1445,29 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
     }
 
     await client.query('BEGIN');
+
+    await client.query(
+      `
+      UPDATE analysis_batches
+      SET
+        profile_id = COALESCE($1, profile_id),
+        profile_name = COALESCE($2, profile_name),
+        planted_date = COALESCE($3, planted_date),
+        planted_time = COALESCE($4, planted_time),
+        rice_variety = COALESCE($5, rice_variety),
+        maturity_days = COALESCE($6, maturity_days)
+      WHERE id = $7
+      `,
+      [
+        profileId ?? null,
+        profileName ?? null,
+        plantedDate || null,
+        plantedTime || null,
+        riceVariety ?? null,
+        maturityDays ?? null,
+        batchId,
+      ]
+    );
 
     const latestResultRes = await client.query(
       `
@@ -1451,6 +1696,7 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 await ensureOriginalImageColumn();
 await ensureImageOrderColumn();
+await ensureCropTimelineColumns();
 
 app.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`);

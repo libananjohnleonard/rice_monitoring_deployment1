@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently --names \"FRONT,BACK\" --prefix-colors \"blue,green\" \"npm run dev:frontend\" \"npm run dev:backend\"",
-    "dev:frontend": "vite",
-    "dev:backend": "cd server && npm run dev",
+    "dev:frontend": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "dev:backend": "cd server && npm start",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

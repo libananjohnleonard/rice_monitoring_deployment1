@@ -21,6 +21,12 @@ import {
   softenTransparentExclusionPreview,
 } from '../lib/imageEditing';
 import { API_BASE_URL } from '../lib/config';
+import {
+  calculateCropAgeDays,
+  getMaturityWindow,
+  resolveMaturityDays,
+  type MaturityAssessment,
+} from '../lib/riceMaturity';
 
 export type AnalysisResultDetails = {
   status: 'Healthy' | 'Moderate' | 'Poor';
@@ -30,6 +36,7 @@ export type AnalysisResultDetails = {
   green: number;
   yellow: number;
   brown: number;
+  recommendations?: string;
   totalSections?: number;
   healthySections?: number;
   warningSections?: number;
@@ -37,6 +44,7 @@ export type AnalysisResultDetails = {
   selectedSectionId?: string;
   gridEstimate?: string;
   interpretation: string;
+  maturityAssessment?: MaturityAssessment;
   gridRows?: number;
   gridCols?: number;
   sections?: SectionResult[];
@@ -136,6 +144,173 @@ function statusClasses(status: string) {
     default:
       return 'bg-slate-100 text-slate-700';
   }
+}
+
+function statusSummaryClasses(status: AnalysisResultDetails['status']) {
+  switch (status) {
+    case 'Healthy':
+      return {
+        card: 'bg-emerald-100',
+        label: 'text-emerald-700',
+        value: 'text-emerald-900',
+      };
+    case 'Moderate':
+      return {
+        card: 'bg-amber-100',
+        label: 'text-amber-700',
+        value: 'text-amber-900',
+      };
+    case 'Poor':
+      return {
+        card: 'bg-red-100',
+        label: 'text-red-700',
+        value: 'text-red-900',
+      };
+  }
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
+}
+
+type FindingsInput = {
+  status: AnalysisResultDetails['status'];
+  healthScore: number;
+  green: number;
+  yellow: number;
+  brown: number;
+  harvestStatus: NonNullable<AnalysisResultDetails['harvestStatus']>;
+  cropAgeDays?: number;
+  cropMaturityDays?: number;
+};
+
+function getTimelineComparison(cropAgeDays?: number, cropMaturityDays?: number) {
+  const maturityWindow = getMaturityWindow(cropMaturityDays);
+
+  if (typeof cropAgeDays !== 'number' || !cropMaturityDays || !maturityWindow) {
+    return null;
+  }
+
+  const remainingDays = Math.max(0, cropMaturityDays - cropAgeDays);
+  return {
+    remainingDays,
+    remainingText: `${remainingDays} day${remainingDays === 1 ? '' : 's'}`,
+    rangeText: `day ${maturityWindow.start} to day ${cropMaturityDays}`,
+    isBeforeRange: cropAgeDays < maturityWindow.start,
+    isPastRange: cropAgeDays > maturityWindow.end,
+    isInRange: cropAgeDays >= maturityWindow.start && cropAgeDays <= maturityWindow.end,
+  };
+}
+
+function needsInspection({
+  status,
+  yellow,
+  brown,
+  harvestStatus,
+}: Pick<FindingsInput, 'status' | 'yellow' | 'brown' | 'harvestStatus'>) {
+  return (
+    status === 'Poor' ||
+    yellow >= 55 ||
+    brown >= 8 ||
+    harvestStatus === 'Needs Attention or Overripe'
+  );
+}
+
+function buildRecommendedAction(input: FindingsInput) {
+  const comparison = getTimelineComparison(input.cropAgeDays, input.cropMaturityDays);
+  const inspectionNeeded = needsInspection(input);
+
+  if (!comparison) {
+    return 'Add planting date and maturity day to compare harvest timing.';
+  }
+
+  if (comparison.isBeforeRange) {
+    return `Too early to harvest now. Wait about ${comparison.remainingText} to reach full maturity near day ${input.cropMaturityDays}. Inspect before harvest because the readings show stress or abnormal maturity-like signs.`;
+  }
+
+  if (comparison.isPastRange) {
+    const overdueDays = (input.cropAgeDays ?? 0) - (input.cropMaturityDays ?? 0);
+    return `Past full maturity by ${overdueDays} day${overdueDays === 1 ? '' : 's'}. Inspect for overripe plants, declining health, or field stress before harvest.`;
+  }
+
+  if (inspectionNeeded) {
+    return `Crop is within the expected harvest range and about ${comparison.remainingText} from full maturity near day ${input.cropMaturityDays}, but do not harvest based on timeline alone. Inspect first because the readings show stress or overripe-like signs.`;
+  }
+
+  return `Harvest can be planned within the ${comparison.rangeText} range. For full maturity, harvest near day ${input.cropMaturityDays}; about ${comparison.remainingText} remain. Continue monitoring and confirm field condition before harvest.`;
+}
+
+function FindingsExplanation(input: FindingsInput) {
+  const comparison = getTimelineComparison(input.cropAgeDays, input.cropMaturityDays);
+  const inspectionNeeded = needsInspection(input);
+
+  return (
+    <div className="mt-1 space-y-2 text-sm text-amber-900">
+      <p>
+        <span className="font-semibold text-amber-950">Health Status:</span>{' '}
+        <span className={`font-bold ${statusSummaryClasses(input.status).value}`}>
+          ({input.healthScore}) {input.status}
+        </span>
+        . The crop is showing{' '}
+        <span className={inspectionNeeded ? 'font-bold text-red-700' : 'font-bold text-emerald-700'}>
+          {inspectionNeeded
+            ? 'stress or abnormal maturity-like signs'
+            : 'readings that are generally aligned with its timeline'}
+        </span>
+        .
+      </p>
+
+      <p>
+        <span className="font-semibold text-green-700">Green: {formatPercent(input.green)}</span>
+        {' | '}
+        <span className="font-semibold text-yellow-700">Yellow: {formatPercent(input.yellow)}</span>
+        {' | '}
+        <span className="font-semibold text-orange-700">Brown: {formatPercent(input.brown)}</span>
+        {' | '}
+        <span
+          className={`font-semibold ${
+            input.harvestStatus === 'Needs Attention or Overripe'
+              ? 'text-red-700'
+              : 'text-amber-800'
+          }`}
+        >
+          Harvest Status: {input.harvestStatus}
+        </span>
+      </p>
+
+      {comparison ? (
+        <p>
+          Expected maturity range is{' '}
+          <span className="font-bold text-amber-950">{comparison.rangeText}</span>.
+          {comparison.isBeforeRange && (
+            <>
+              {' '}The crop is still early, with about{' '}
+              <span className="font-bold text-red-700">
+                {comparison.remainingText} remaining before full maturity
+              </span>
+              . Because the image is already highly yellow or harvest-like, inspect the field before making a harvest decision.
+            </>
+          )}
+          {comparison.isInRange && (
+            <>
+              {' '}The crop is within the expected range, with about{' '}
+              <span className="font-bold text-amber-800">
+                {comparison.remainingText} remaining before full maturity
+              </span>
+              . {inspectionNeeded ? 'Inspect the crop first because the readings show warning signs.' : 'The readings are aligned with the expected timeline.'}
+            </>
+          )}
+          {comparison.isPastRange && (
+            <>
+              {' '}The crop is past the expected range, so inspect for overripe plants or declining health.
+            </>
+          )}
+        </p>
+      ) : (
+        <p>Maturity comparison is not available because planting date or maturity day is missing.</p>
+      )}
+    </div>
+  );
 }
 
 function harvestStatusClasses(
@@ -508,7 +683,7 @@ function GridOverlayPreview({
               style={{ aspectRatio: `${imageAspectRatio}` }}
             >
               <span className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm">
-                {isEditedPreview ? 'Preview: Edited' : 'Original'}
+                {isEditedPreview ? 'Preview: Edited' : 'Preview: Original'}
               </span>
               <img
                 src={panelImageSrc}
@@ -943,6 +1118,35 @@ function Workspace({
       activeResult?.warningSections ?? data.result.warningSections ?? 0,
     poorSections: activeResult?.poorSections ?? data.result.poorSections ?? 0,
   };
+  const healthStatusTone = statusSummaryClasses(savedSummary.status);
+  const cropAgeDays =
+    calculateCropAgeDays(data.plantedDate, data.plantedTime) ??
+    data.result.maturityAssessment?.cropAgeDays;
+  const cropMaturityDays =
+    resolveMaturityDays(data.riceVariety, data.maturityDays) ??
+    data.result.maturityAssessment?.maturityDays;
+  const plantedDateLabel = data.plantedDate
+    ? new Date(`${data.plantedDate.slice(0, 10)}T00:00:00`).toLocaleDateString()
+    : null;
+  const plantedTimeLabel = data.plantedTime?.slice(0, 5) || null;
+  const hasCropTimeline =
+    data.profileName ||
+    plantedDateLabel ||
+    plantedTimeLabel ||
+    data.riceVariety ||
+    cropMaturityDays ||
+    data.result.maturityAssessment;
+  const findingsInput = {
+    status: savedSummary.status,
+    healthScore: savedSummary.healthScore,
+    green: savedSummary.green,
+    yellow: savedSummary.yellow,
+    brown: savedSummary.brown,
+    harvestStatus: savedSummary.harvestStatus,
+    cropAgeDays,
+    cropMaturityDays,
+  };
+  const recommendedAction = buildRecommendedAction(findingsInput);
 
   const toggleExcludeSection = async (sectionLabel: string) => {
     const targetSection = (activeResult?.sections ?? []).find(
@@ -1046,9 +1250,9 @@ function Workspace({
       </div>
 
       <div className="grid gap-2.5 sm:grid-cols-5">
-        <div className="rounded-xl bg-emerald-100 p-2.5">
-          <p className="text-xs text-emerald-700">Health Status</p>
-          <p className="mt-1 text-xl font-bold text-emerald-900">
+        <div className={`rounded-xl p-2.5 ${healthStatusTone.card}`}>
+          <p className={`text-xs ${healthStatusTone.label}`}>Health Status</p>
+          <p className={`mt-1 text-xl font-bold ${healthStatusTone.value}`}>
             {`(${savedSummary.healthScore}) ${savedSummary.status}`}
           </p>
         </div>
@@ -1080,6 +1284,59 @@ function Workspace({
           </p>
         </div>
       </div>
+
+      {hasCropTimeline && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+          <div className="grid gap-2.5 sm:grid-cols-5">
+            <div>
+              <p className="text-xs text-amber-700">Profile</p>
+              <p className="mt-1 font-semibold text-amber-950">
+                {data.profileName ?? 'Not provided'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-amber-700">Date Planted</p>
+              <p className="mt-1 font-semibold text-amber-950">
+                {plantedDateLabel
+                  ? `${plantedDateLabel}${plantedTimeLabel ? `, ${plantedTimeLabel}` : ''}`
+                  : 'Not provided'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-amber-700">Rice Variety</p>
+              <p className="mt-1 font-semibold text-amber-950">
+                {data.riceVariety ?? 'Not provided'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-amber-700">Crop Age</p>
+              <p className="mt-1 font-semibold text-amber-950">
+                {typeof cropAgeDays === 'number' ? `${cropAgeDays} days` : 'Not available'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-amber-700">Maturity Day</p>
+              <p className="mt-1 font-semibold text-amber-950">
+                {cropMaturityDays
+                  ? `Day ${cropMaturityDays}`
+                  : 'Not available'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2 grid gap-2">
+            <div className="rounded-lg bg-white/70 p-2">
+              <p className="text-xs font-semibold text-amber-700">Findings</p>
+              <FindingsExplanation {...findingsInput} />
+            </div>
+            <div className="rounded-lg bg-white/70 p-2">
+              <p className="text-xs font-semibold text-amber-700">Recommended Action</p>
+              <p className="mt-1 text-sm font-semibold text-red-700">
+                {recommendedAction}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className={`grid gap-2.5 ${isWhole ? 'sm:grid-cols-4' : 'sm:grid-cols-5'}`}>
         <div className="rounded-xl border border-emerald-200 bg-white p-2.5">
@@ -1440,6 +1697,8 @@ function History({
           {displayed.map((item) => {
             const isSelected = selectedHistoryId === item.id;
             const itemHarvestStatus = resolveHarvestStatus(item.result);
+            const historyPreview =
+              item.images[0]?.originalPreview || item.images[0]?.preview;
 
             if (historyView === 'card') {
               return (
@@ -1454,9 +1713,9 @@ function History({
                   }`}
                 >
                   <div className="h-24 w-full overflow-hidden bg-emerald-100">
-                    {item.images[0]?.preview ? (
+                    {historyPreview ? (
                       <img
-                        src={item.images[0].preview}
+                        src={historyPreview}
                         alt="History preview"
                         className="h-full w-full bg-slate-100 object-contain"
                       />
@@ -1532,9 +1791,9 @@ function History({
               >
                 <div className="flex items-start gap-4">
                   <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-emerald-100">
-                    {item.images[0]?.preview ? (
+                    {historyPreview ? (
                       <img
-                        src={item.images[0].preview}
+                        src={historyPreview}
                         alt="History preview"
                         className="h-full w-full bg-slate-100 object-contain"
                       />
