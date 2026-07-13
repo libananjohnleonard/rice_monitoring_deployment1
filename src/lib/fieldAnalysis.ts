@@ -6,6 +6,7 @@ import type {
   WholeFieldImageResult,
 } from '../components/AnalysisResults';
 import { EXCLUSION_MASK_COLOR } from './imageEditing';
+import { getStatusFromScore } from './healthScore';
 import {
   calculateCropAgeDays,
   getMaturityWindow,
@@ -112,12 +113,6 @@ function isExcludedMaskPixel({ r, g, b }: RGB) {
     Math.abs(g - maskRgb.g) <= 8 &&
     Math.abs(b - maskRgb.b) <= 8
   );
-}
-
-function getStatusFromScore(score: number): 'Healthy' | 'Moderate' | 'Poor' {
-  if (score >= 70) return 'Healthy';
-  if (score >= 40) return 'Moderate';
-  return 'Poor';
 }
 
 function getHarvestStatus(

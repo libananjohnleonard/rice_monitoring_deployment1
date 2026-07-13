@@ -11,6 +11,7 @@ import {
   summarizeSectionsForReanalysis,
   summarizeWholeFieldImageResults,
 } from '../lib/fieldAnalysis';
+import { resolveHealthStatus } from '../lib/healthScore';
 import { getFieldProfiles } from '../lib/fieldProfiles';
 import { API_BASE_URL } from '../lib/config';
 import { fetchJson } from '../lib/http';
@@ -28,7 +29,8 @@ type SaveAnalysisResponse = {
 function currentStatusLabel(result?: AnalysisHistoryItem['result'] | null) {
   if (!result) return 'Waiting';
   const harvestStatus = resolveHarvestStatus(result);
-  return `${result.status} - ${harvestStatus}`;
+  const status = resolveHealthStatus(result.healthScore, result.status);
+  return `(${result.healthScore}) ${status} - ${harvestStatus}`;
 }
 
 export function HomePage() {

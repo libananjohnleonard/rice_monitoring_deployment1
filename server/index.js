@@ -923,7 +923,7 @@ app.get('/api/analyses', async (req, res) => {
             altitude: img.altitude ? Number(img.altitude) : undefined,
           })),
           result: applyCropTimeline(row, {
-            status: row.health_status,
+            status: getStatusFromScore(Number(row.health_score)),
             harvestReady: row.harvest_ready,
             harvestStatus: getHarvestStatus(
               Number(row.yellow_percentage),
@@ -1002,7 +1002,7 @@ app.get('/api/analyses', async (req, res) => {
             sectionLabel: section.section_label,
             rowIndex: section.row_index,
             colIndex: section.col_index,
-            healthStatus: section.health_status,
+            healthStatus: getStatusFromScore(Number(section.health_score)),
             healthScore: section.health_score,
             greenPercentage: Number(section.green_percentage),
             yellowPercentage: Number(section.yellow_percentage),
@@ -1054,7 +1054,7 @@ app.get('/api/analyses', async (req, res) => {
           }
 
           return applyCropTimeline(row, {
-            status: row.health_status,
+            status: getStatusFromScore(Number(row.health_score)),
             harvestReady: row.harvest_ready,
             harvestStatus: getHarvestStatus(
               Number(row.yellow_percentage),
@@ -1217,7 +1217,7 @@ app.get('/api/analyses/:batchId', async (req, res) => {
       sectionLabel: section.section_label,
       rowIndex: section.row_index,
       colIndex: section.col_index,
-      healthStatus: section.health_status,
+      healthStatus: getStatusFromScore(Number(section.health_score)),
       healthScore: section.health_score,
       greenPercentage: Number(section.green_percentage),
       yellowPercentage: Number(section.yellow_percentage),
@@ -1273,7 +1273,7 @@ app.get('/api/analyses/:batchId', async (req, res) => {
 
     if (!result) {
       result = applyCropTimeline(detailRow, {
-        status: detailRow.health_status,
+        status: getStatusFromScore(Number(detailRow.health_score)),
         harvestReady: detailRow.harvest_ready,
         harvestStatus: getHarvestStatus(
           Number(detailRow.yellow_percentage),

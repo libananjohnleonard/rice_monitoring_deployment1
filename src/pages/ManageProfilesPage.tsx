@@ -5,6 +5,10 @@ import {
   type AnalysisHistoryItem,
 } from '../components/AnalysisResults';
 import {
+  resolveHealthStatus,
+  scoreBoxClasses,
+} from '../lib/healthScore';
+import {
   RICE_VARIETY_OPTIONS,
   getMaturityDaysForVariety,
 } from '../lib/riceMaturity';
@@ -607,6 +611,11 @@ export function ManageProfilesPage() {
             {selectedProfileAnalyses.map((item) => {
               const preview = item.images[0]?.originalPreview || item.images[0]?.preview;
               const harvestStatus = resolveHarvestStatus(item.result);
+              const resolvedStatus = resolveHealthStatus(
+                item.result.healthScore,
+                item.result.status
+              );
+              const scoreTone = scoreBoxClasses(resolvedStatus);
 
               return (
                 <article
@@ -640,17 +649,17 @@ export function ManageProfilesPage() {
                         </div>
                         <span
                           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
-                            item.result.status
+                            resolvedStatus
                           )}`}
                         >
-                          {item.result.status}
+                          ({item.result.healthScore}) {resolvedStatus}
                         </span>
                       </div>
 
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <div className="rounded-lg bg-emerald-50 px-2 py-1.5">
-                          <p className="text-emerald-600">Score</p>
-                          <p className="font-semibold text-emerald-950">
+                        <div className={`rounded-lg px-2 py-1.5 ${scoreTone.box}`}>
+                          <p className={scoreTone.label}>Score</p>
+                          <p className={`font-semibold ${scoreTone.value}`}>
                             {item.result.healthScore}
                           </p>
                         </div>

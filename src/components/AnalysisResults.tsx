@@ -22,6 +22,10 @@ import {
 } from '../lib/imageEditing';
 import { API_BASE_URL } from '../lib/config';
 import {
+  resolveHealthStatus,
+  scoreBoxClasses,
+} from '../lib/healthScore';
+import {
   calculateCropAgeDays,
   getMaturityWindow,
   resolveMaturityDays,
@@ -1097,26 +1101,36 @@ function Workspace({
       ? `${activeImage.altitude} m`
       : 'GPS not available';
 
+  const summarySource =
+    hasPerImageWholeFieldResults && navigableImageCount > 1
+      ? activeResult ?? data.result
+      : data.result ?? activeResult;
+
   const savedSummary = {
-    status: activeResult?.status ?? data.result.status,
-    harvestReady: activeResult?.harvestReady ?? data.result.harvestReady ?? false,
+    status: resolveHealthStatus(
+      summarySource?.healthScore ?? 0,
+      summarySource?.status ?? data.result.status
+    ),
+    harvestReady:
+      summarySource?.harvestReady ?? data.result.harvestReady ?? false,
     harvestStatus: resolveHarvestStatus({
-      harvestStatus: activeResult?.harvestStatus ?? data.result.harvestStatus,
-      harvestReady: activeResult?.harvestReady ?? data.result.harvestReady,
-      yellow: activeResult?.yellow ?? data.result.yellow,
-      green: activeResult?.green ?? data.result.green,
-      healthScore: activeResult?.healthScore ?? data.result.healthScore,
+      harvestStatus: summarySource?.harvestStatus ?? data.result.harvestStatus,
+      harvestReady: summarySource?.harvestReady ?? data.result.harvestReady,
+      yellow: summarySource?.yellow ?? data.result.yellow,
+      green: summarySource?.green ?? data.result.green,
+      healthScore: summarySource?.healthScore ?? data.result.healthScore,
     }),
-    healthScore: activeResult?.healthScore ?? data.result.healthScore,
-    green: activeResult?.green ?? data.result.green,
-    yellow: activeResult?.yellow ?? data.result.yellow,
-    brown: activeResult?.brown ?? data.result.brown,
-    totalSections: activeResult?.totalSections ?? data.result.totalSections ?? 0,
+    healthScore: summarySource?.healthScore ?? data.result.healthScore,
+    green: summarySource?.green ?? data.result.green,
+    yellow: summarySource?.yellow ?? data.result.yellow,
+    brown: summarySource?.brown ?? data.result.brown,
+    totalSections: summarySource?.totalSections ?? data.result.totalSections ?? 0,
     healthySections:
-      activeResult?.healthySections ?? data.result.healthySections ?? 0,
+      summarySource?.healthySections ?? data.result.healthySections ?? 0,
     warningSections:
-      activeResult?.warningSections ?? data.result.warningSections ?? 0,
-    poorSections: activeResult?.poorSections ?? data.result.poorSections ?? 0,
+      summarySource?.warningSections ?? data.result.warningSections ?? 0,
+    poorSections:
+      summarySource?.poorSections ?? data.result.poorSections ?? 0,
   };
   const healthStatusTone = statusSummaryClasses(savedSummary.status);
   const cropAgeDays =
@@ -1697,6 +1711,11 @@ function History({
           {displayed.map((item) => {
             const isSelected = selectedHistoryId === item.id;
             const itemHarvestStatus = resolveHarvestStatus(item.result);
+            const resolvedStatus = resolveHealthStatus(
+              item.result.healthScore,
+              item.result.status
+            );
+            const scoreTone = scoreBoxClasses(resolvedStatus);
             const historyPreview =
               item.images[0]?.originalPreview || item.images[0]?.preview;
 
@@ -1729,10 +1748,10 @@ function History({
                       </p>
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
-                          item.result.status
+                          resolvedStatus
                         )}`}
                       >
-                      Overall Health: {item.result.status}
+                      Overall Health: ({item.result.healthScore}) {resolvedStatus}
                     </span>
                   </div>
 
@@ -1748,9 +1767,9 @@ function History({
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                      <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
-                        <p className="text-emerald-600">Score</p>
-                        <p className="font-semibold text-emerald-900">
+                      <div className={`rounded-lg px-2 py-1 ${scoreTone.box}`}>
+                        <p className={scoreTone.label}>Score</p>
+                        <p className={`font-semibold ${scoreTone.value}`}>
                           {item.result.healthScore}
                         </p>
                       </div>
@@ -1807,10 +1826,10 @@ function History({
                       </p>
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClasses(
-                          item.result.status
+                          resolvedStatus
                         )}`}
                       >
-                          Overall Health: {item.result.status}
+                          Overall Health: ({item.result.healthScore}) {resolvedStatus}
                         </span>
                       </div>
 
@@ -1826,9 +1845,9 @@ function History({
                     </div>
 
                     <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                      <div className="rounded-lg bg-emerald-100/70 px-2 py-1">
-                        <p className="text-emerald-600">Score</p>
-                        <p className="font-semibold text-emerald-900">
+                      <div className={`rounded-lg px-2 py-1 ${scoreTone.box}`}>
+                        <p className={scoreTone.label}>Score</p>
+                        <p className={`font-semibold ${scoreTone.value}`}>
                           {item.result.healthScore}
                         </p>
                       </div>

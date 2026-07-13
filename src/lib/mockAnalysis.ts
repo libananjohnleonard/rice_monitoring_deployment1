@@ -35,7 +35,7 @@ export function createMockResult(
   const brown = Number((100 - green - yellow).toFixed(1));
 
   const status =
-    healthScore >= 75 ? 'Healthy' : healthScore >= 55 ? 'Moderate' : 'Poor';
+    healthScore >= 70 ? 'Healthy' : healthScore >= 40 ? 'Moderate' : 'Poor';
 
   if (input.category === 'whole_field') {
     return {
